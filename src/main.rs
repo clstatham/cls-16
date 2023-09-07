@@ -6,5 +6,7 @@ pub mod emu;
 pub mod plat;
 
 fn main() {
-    println!("Hello, CLS-16!");
+    env_logger::init();
+    #[cfg(debug_assertions)]
+    log::set_max_level(log::LevelFilter::Trace);
 }

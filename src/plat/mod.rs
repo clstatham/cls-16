@@ -1,18 +1,16 @@
 //! Common platform code between CLS-16's other modules.
 
+use anyhow::Result;
 use thiserror::Error;
 
 /// An error for the core platform of CLS-16.
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum PlatformError {
     #[error("invalid opcode")]
     InvalidOpcode,
     #[error("invalid instruction")]
     InvalidInstruction,
 }
-
-/// Type alias for Result<T, [PlatformError]>.
-pub type PResult<T> = Result<T, PlatformError>;
 
 /// The twelve registers in CLS-16.
 ///
@@ -43,18 +41,18 @@ impl TryFrom<u8> for Register {
 
     fn try_from(value: u8) -> Result<Self, PlatformError> {
         match value {
-            0 => Ok(Self::R0),
-            1 => Ok(Self::R1),
-            2 => Ok(Self::R2),
-            3 => Ok(Self::R3),
-            4 => Ok(Self::R4),
-            5 => Ok(Self::R5),
-            6 => Ok(Self::R6),
-            7 => Ok(Self::R7),
-            8 => Ok(Self::R8),
-            9 => Ok(Self::PC),
-            10 => Ok(Self::SP),
-            11 => Ok(Self::FL),
+            v if v == Self::R0 as u8 => Ok(Self::R0),
+            v if v == Self::R1 as u8 => Ok(Self::R1),
+            v if v == Self::R2 as u8 => Ok(Self::R2),
+            v if v == Self::R3 as u8 => Ok(Self::R3),
+            v if v == Self::R4 as u8 => Ok(Self::R4),
+            v if v == Self::R5 as u8 => Ok(Self::R5),
+            v if v == Self::R6 as u8 => Ok(Self::R6),
+            v if v == Self::R7 as u8 => Ok(Self::R7),
+            v if v == Self::R8 as u8 => Ok(Self::R8),
+            v if v == Self::PC as u8 => Ok(Self::PC),
+            v if v == Self::SP as u8 => Ok(Self::SP),
+            v if v == Self::FL as u8 => Ok(Self::FL),
             _ => Err(PlatformError::InvalidOpcode),
         }
     }
@@ -74,10 +72,10 @@ impl TryFrom<u8> for Register {
 ///
 /// Memory and branching opcode notes ([STL][Opcode::Stl], [STH][Opcode::Sth], [LDL][Opcode::Ldl], [LDH][Opcode::Ldh], [LDI][Opcode::Ldi], [JZ][Opcode::Jz]):
 ///
-/// - The memory addresses are given by either a register or a 16-bit immediate (literal) value.
+/// - The memory addresses are given by a register.
 /// - `xxL` will operate on the lower 8 bits of the relevant register.
 /// - `xxH` will operate on the higher 8 bits of the relevant register.
-/// - `LDI` will load/store immediate values into the whole register, setting the other bits to 0.
+/// - `LDI` will load/store 16-bit immediate values into the whole register, setting the other bits to 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
@@ -123,13 +121,12 @@ pub enum Opcode {
     /// }
     /// ```
     Jz,
-    /// "Jump if Zero (Immediate)"
-    /// ```text
-    /// if FL.Zero == 1 {
-    ///     PC <- (immediate value)
-    /// }
-    /// ```
-    Jzi,
+
+    /* Debugging */
+    /// Prints the value in `regA` to the debug monitor of the emulator.
+    Printi,
+    /// Interprets the value in `regA.LO` as an ASCII character and prints it to the debug monitor of the emulator.
+    Printc,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -137,22 +134,24 @@ impl TryFrom<u8> for Opcode {
 
     fn try_from(value: u8) -> Result<Self, PlatformError> {
         match value {
-            0 => Ok(Self::Halt),
-            1 => Ok(Self::Add),
-            2 => Ok(Self::Sub),
-            3 => Ok(Self::And),
-            4 => Ok(Self::Or),
-            5 => Ok(Self::Xor),
-            6 => Ok(Self::Not),
-            7 => Ok(Self::Shl),
-            8 => Ok(Self::Shr),
-            9 => Ok(Self::Stl),
-            10 => Ok(Self::Sth),
-            11 => Ok(Self::Ldl),
-            12 => Ok(Self::Ldh),
-            13 => Ok(Self::Ldi),
-            14 => Ok(Self::Jz),
-            15 => Ok(Self::Jzi),
+            v if v == Self::Halt as u8 => Ok(Self::Halt),
+            v if v == Self::Add as u8 => Ok(Self::Add),
+            v if v == Self::Sub as u8 => Ok(Self::Sub),
+            v if v == Self::And as u8 => Ok(Self::And),
+            v if v == Self::Or as u8 => Ok(Self::Or),
+            v if v == Self::Xor as u8 => Ok(Self::Xor),
+            v if v == Self::Not as u8 => Ok(Self::Not),
+            v if v == Self::Shl as u8 => Ok(Self::Shl),
+            v if v == Self::Shr as u8 => Ok(Self::Shr),
+            v if v == Self::Stl as u8 => Ok(Self::Stl),
+            v if v == Self::Sth as u8 => Ok(Self::Sth),
+            v if v == Self::Ldl as u8 => Ok(Self::Ldl),
+            v if v == Self::Ldh as u8 => Ok(Self::Ldh),
+            v if v == Self::Ldi as u8 => Ok(Self::Ldi),
+            v if v == Self::Jz as u8 => Ok(Self::Jz),
+            v if v == Self::Printi as u8 => Ok(Self::Printi),
+            v if v == Self::Printc as u8 => Ok(Self::Printc),
+
             _ => Err(PlatformError::InvalidOpcode),
         }
     }
@@ -191,14 +190,14 @@ impl Instruction {
     /// # Errors
     ///
     /// This function will return an error if the instruction's format is invalid for its opcode.
-    pub fn validate(self) -> PResult<()> {
+    pub fn validate(self) -> Result<()> {
         #[doc(hidden)]
         macro_rules! assert_format {
             ($fmt:pat) => {
                 if matches!(self.format, $fmt) {
                     Ok(())
                 } else {
-                    Err(PlatformError::InvalidInstruction)
+                    Err(PlatformError::InvalidInstruction.into())
                 }
             };
         }
@@ -218,7 +217,8 @@ impl Instruction {
             Opcode::Ldh => assert_format!(InstrFormat::RR(_, _)),
             Opcode::Ldi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::Jz => assert_format!(InstrFormat::R(_)),
-            Opcode::Jzi => assert_format!(InstrFormat::I(_)),
+            Opcode::Printi => assert_format!(InstrFormat::R(_)),
+            Opcode::Printc => assert_format!(InstrFormat::R(_)),
         }
     }
 
@@ -227,7 +227,7 @@ impl Instruction {
     /// # Errors
     ///
     /// This function will return an error if the instruction's format is invalid for its opcode.
-    pub fn to_bytes(self) -> PResult<[u8; 4]> {
+    pub fn to_bytes(self) -> Result<[u8; 4]> {
         self.validate()?;
         let op = self.op as u8;
         let format = match self.format {
@@ -246,7 +246,7 @@ impl Instruction {
     /// # Errors
     ///
     /// This function will return an error if the given word is not a valid instruction.
-    pub fn from_bytes(bytes: [u8; 4]) -> PResult<Self> {
+    pub fn from_bytes(bytes: [u8; 4]) -> Result<Self> {
         let op: Opcode = bytes[0].try_into()?;
         let format = match op {
             Opcode::Halt => InstrFormat::OpOnly,
@@ -295,7 +295,8 @@ impl Instruction {
                 u16::from_le_bytes([bytes[2], bytes[3]]),
             ),
             Opcode::Jz => InstrFormat::R(bytes[3].try_into()?),
-            Opcode::Jzi => InstrFormat::I(u16::from_le_bytes([bytes[2], bytes[3]])),
+            Opcode::Printi => InstrFormat::R(bytes[3].try_into()?),
+            Opcode::Printc => InstrFormat::R(bytes[3].try_into()?),
         };
 
         let this = Self { op, format };
