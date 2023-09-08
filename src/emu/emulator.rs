@@ -16,34 +16,6 @@ use super::{
     registers::{EmuRegisters, Fl},
 };
 
-pub struct Counter {
-    count: u16,
-    pub tx_hi: Sender<u8>,
-    pub tx_lo: Sender<u8>,
-}
-
-impl Counter {
-    pub fn new(initial_value: u16) -> Self {
-        let hi = (initial_value >> 8 & 0xff) as u8;
-        let lo = (initial_value & 0xff) as u8;
-        let (tx_hi, _) = channel(hi);
-        let (tx_lo, _) = channel(lo);
-        Self {
-            count: initial_value,
-            tx_hi,
-            tx_lo,
-        }
-    }
-
-    pub fn tick(&mut self) {
-        self.count += 1;
-        let hi = (self.count >> 8 & 0xff) as u8;
-        let lo = (self.count & 0xff) as u8;
-        self.tx_hi.send_replace(hi);
-        self.tx_lo.send_replace(lo);
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmuState {
     Run,
@@ -205,9 +177,9 @@ impl<'a> Emulator<'a> {
                 let current_instr = &self.program_memory
                     [self.registers.pc.value as usize..self.registers.pc.value as usize + 4];
                 self.registers.ih.value =
-                    (current_instr[0] as u16) << 8 | (current_instr[1] as u16);
+                    (current_instr[1] as u16) << 8 | (current_instr[0] as u16);
                 self.registers.il.value =
-                    (current_instr[2] as u16) << 8 | (current_instr[3] as u16);
+                    (current_instr[3] as u16) << 8 | (current_instr[2] as u16);
 
                 let current_instr = Instruction::from_bytes([
                     current_instr[0],

@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let program = include_str!("../examples/test1.s");
     let mut asm = Assembler::default();
     let bin = asm.assemble(program)?;
-    let mut emu = Emulator::new(&bin, 2.0)?;
+    let mut emu = Emulator::new(&bin, 20.0)?;
     emu.run_until_halt()?;
     Ok(())
 }
