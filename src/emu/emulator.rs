@@ -92,11 +92,11 @@ impl<'a> Emulator<'a> {
                 async { self.registers.r4.update() },
                 async { self.registers.r5.update() },
                 async { self.registers.r6.update() },
-                async { self.registers.r7.update() },
-                async { self.registers.r8.update() },
+                async { self.registers.sp.update() },
+                async { self.registers.fp.update() },
                 async { self.registers.pc.update() },
-                async { self.registers.ih.update() },
                 async { self.registers.il.update() },
+                async { self.registers.ih.update() },
                 async { self.registers.fl.update() },
             );
 
@@ -116,9 +116,9 @@ impl<'a> Emulator<'a> {
                     MicroOp::SetRegLoopback(reg) => self.registers.loopback(reg)?,
                     MicroOp::SetRegImmediate(reg) => {
                         self.registers
-                            .route_input_hi(reg, self.registers.il.output_bus_hi.subscribe())?;
+                            .route_input_hi(reg, self.registers.ih.output_bus_hi.subscribe())?;
                         self.registers
-                            .route_input_lo(reg, self.registers.il.output_bus_lo.subscribe())?;
+                            .route_input_lo(reg, self.registers.ih.output_bus_lo.subscribe())?;
                     }
                     MicroOp::SetAluLeft(reg) => {
                         self.alu.route_left_hi(self.registers.subscribe_hi(reg));
@@ -166,7 +166,7 @@ impl<'a> Emulator<'a> {
                     MicroOp::SetPc(reg) => {
                         let lo = *self.registers.subscribe_lo(reg).borrow();
                         let hi = *self.registers.subscribe_hi(reg).borrow();
-                        self.registers.pc.value = (lo as u16) << 8 | (hi as u16);
+                        self.registers.pc.value = u16::from_le_bytes([lo, hi]);
                         self.state = EmuState::ContinueDontUpdatePc;
                     }
                     MicroOp::SetPcIfZero(reg) => {
@@ -174,7 +174,7 @@ impl<'a> Emulator<'a> {
                         if fl.contains(Fl::ZERO) {
                             let lo = *self.registers.subscribe_lo(reg).borrow();
                             let hi = *self.registers.subscribe_hi(reg).borrow();
-                            self.registers.pc.value = (lo as u16) << 8 | (hi as u16);
+                            self.registers.pc.value = u16::from_le_bytes([lo, hi]);
                             self.state = EmuState::ContinueDontUpdatePc;
                         }
                     }
@@ -199,10 +199,8 @@ impl<'a> Emulator<'a> {
                 }
                 let current_instr = &self.program_memory
                     [self.registers.pc.value as usize..self.registers.pc.value as usize + 4];
-                self.registers.ih.value =
-                    (current_instr[0] as u16) << 8 | (current_instr[1] as u16);
-                self.registers.il.value =
-                    (current_instr[2] as u16) << 8 | (current_instr[3] as u16);
+                self.registers.il.value = u16::from_le_bytes([current_instr[0], current_instr[1]]);
+                self.registers.ih.value = u16::from_le_bytes([current_instr[2], current_instr[3]]);
 
                 let current_instr = Instruction::from_bytes([
                     current_instr[0],

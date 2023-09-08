@@ -78,9 +78,8 @@ impl Alu {
 
     /// Updates the ALU's internal state, performing its currently-configured calculation and sending the result along its output bus.
     pub fn update(&mut self) {
-        let left = (*self.left_bus_lo.borrow() as u16) << 8 | (*self.left_bus_hi.borrow() as u16);
-        let right =
-            (*self.right_bus_lo.borrow() as u16) << 8 | (*self.right_bus_hi.borrow() as u16);
+        let left = u16::from_le_bytes([*self.left_bus_lo.borrow(), *self.left_bus_hi.borrow()]);
+        let right = u16::from_le_bytes([*self.right_bus_lo.borrow(), *self.right_bus_hi.borrow()]);
         let result = match self.mode {
             AluMode::Add => {
                 let (result, overflow) = left.overflowing_add(right);

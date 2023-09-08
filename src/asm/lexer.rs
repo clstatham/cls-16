@@ -26,25 +26,40 @@ impl Compound {
 impl Opcode {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
         alt((
-            value(Self::Halt, tag_no_case("halt")),
-            value(Self::Nop, tag_no_case("nop")),
-            value(Self::Add, tag_no_case("add")),
-            value(Self::Sub, tag_no_case("sub")),
-            value(Self::And, tag_no_case("and")),
-            value(Self::Or, tag_no_case("or")),
-            value(Self::Xor, tag_no_case("xor")),
-            value(Self::Not, tag_no_case("not")),
-            value(Self::Shl, tag_no_case("shl")),
-            value(Self::Shr, tag_no_case("shr")),
-            value(Self::Stl, tag_no_case("stl")),
-            value(Self::Sth, tag_no_case("sth")),
-            value(Self::Ldl, tag_no_case("ldl")),
-            value(Self::Ldh, tag_no_case("ldh")),
-            value(Self::Ldi, tag_no_case("ldi")),
-            value(Self::Jmp, tag_no_case("jmp")),
-            value(Self::Jz, tag_no_case("jz")),
-            value(Self::Printi, tag_no_case("printi")),
-            value(Self::Printc, tag_no_case("printc")),
+            alt((
+                value(Self::Halt, tag_no_case("halt")),
+                value(Self::Nop, tag_no_case("nop")),
+            )),
+            alt((
+                value(Self::Add, tag_no_case("add")),
+                value(Self::Addi, tag_no_case("addi")),
+                value(Self::Sub, tag_no_case("sub")),
+                value(Self::Subi, tag_no_case("subi")),
+                value(Self::And, tag_no_case("and")),
+                value(Self::Andi, tag_no_case("andi")),
+                value(Self::Or, tag_no_case("or")),
+                value(Self::Ori, tag_no_case("ori")),
+                value(Self::Xor, tag_no_case("xor")),
+                value(Self::Xori, tag_no_case("xori")),
+                value(Self::Not, tag_no_case("not")),
+                value(Self::Shl, tag_no_case("shl")),
+                value(Self::Shr, tag_no_case("shr")),
+            )),
+            alt((
+                value(Self::Stl, tag_no_case("stl")),
+                value(Self::Sth, tag_no_case("sth")),
+                value(Self::Ldl, tag_no_case("ldl")),
+                value(Self::Ldh, tag_no_case("ldh")),
+                value(Self::Ldi, tag_no_case("ldi")),
+            )),
+            alt((
+                value(Self::Jmp, tag_no_case("jmp")),
+                value(Self::Jz, tag_no_case("jz")),
+            )),
+            alt((
+                value(Self::Printi, tag_no_case("printi")),
+                value(Self::Printc, tag_no_case("printc")),
+            )),
         ))(inp)
     }
 }
@@ -53,7 +68,7 @@ impl Mnemonic {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
         alt((
             map(Opcode::lex, Self::Regular),
-            // map(Compound::lex, Self::Compound),
+            map(Compound::lex, Self::Compound),
         ))(inp)
     }
 }
@@ -68,8 +83,8 @@ impl Register {
             value(Self::R4, tag_no_case("r4")),
             value(Self::R5, tag_no_case("r5")),
             value(Self::R6, tag_no_case("r6")),
-            value(Self::R7, tag_no_case("r7")),
-            value(Self::R8, tag_no_case("r8")),
+            value(Self::SP, tag_no_case("sp")),
+            value(Self::FP, tag_no_case("fp")),
         ))(inp)
     }
 }

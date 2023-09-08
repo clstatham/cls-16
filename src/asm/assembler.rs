@@ -1,14 +1,12 @@
-use std::collections::VecDeque;
-
 use anyhow::{Error, Result};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     asm::{lexer::lex_program, Mnemonic, Span},
-    plat::{Immediate, InstrFormat, Instruction, Opcode, PlatformError},
+    plat::{Immediate, InstrFormat, Instruction, Opcode, Register},
 };
 
-use super::{AsmError, Token, WithSpan};
+use super::{AsmError, Compound, Token, WithSpan};
 
 /// A basic block of code in an assembly listing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -107,8 +105,13 @@ impl<'a, 'b> Instruction<'a> {
                         }
                     }
                     // RI instructions
-                    Opcode::Ldi => {
-                        // LDI is special, because it can be used to load labels (immediate addresses) into a register
+                    // these are special, because they can be used on labels as well as immediate values
+                    Opcode::Ldi
+                    | Opcode::Addi
+                    | Opcode::Andi
+                    | Opcode::Ori
+                    | Opcode::Subi
+                    | Opcode::Xori => {
                         let a = take1();
                         let imm = take1();
                         if let Token::Register(a) = a.item {
@@ -148,6 +151,66 @@ impl<'a, 'b> Instruction<'a> {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::R(a),
+                            });
+                        } else {
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
+                        }
+                    }
+                },
+                Mnemonic::Compound(op) => match op {
+                    Compound::Push => {
+                        // stl     sp regA
+                        // subi    sp $1
+                        // sth     sp regA
+                        // subi    sp $1
+                        let a = take1();
+                        if let Token::Register(a) = a.item {
+                            out.push(Instruction {
+                                op: Opcode::Stl,
+                                format: InstrFormat::RR(Register::SP, a),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Subi,
+                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Sth,
+                                format: InstrFormat::RR(Register::SP, a),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Subi,
+                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                            });
+                        } else {
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
+                        }
+                    }
+                    Compound::Pop => {
+                        // addi    sp $1
+                        // ldh     regA sp
+                        // addi    sp $1
+                        // ldl     regA sp
+                        let a = take1();
+                        if let Token::Register(a) = a.item {
+                            out.push(Instruction {
+                                op: Opcode::Addi,
+                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Ldh,
+                                format: InstrFormat::RR(a, Register::SP),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Addi,
+                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                            });
+                            out.push(Instruction {
+                                op: Opcode::Ldl,
+                                format: InstrFormat::RR(a, Register::SP),
                             });
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {

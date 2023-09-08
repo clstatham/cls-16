@@ -57,7 +57,7 @@ impl Ram {
 
     /// Updates the RAM module's internal state, performing any writes and sending the value pointed to by the address bus along the output bus.
     pub fn update(&mut self) {
-        let addr = (*self.addr_bus_lo.borrow() as u16) << 8 | (*self.addr_bus_hi.borrow() as u16);
+        let addr = u16::from_le_bytes([*self.addr_bus_lo.borrow(), *self.addr_bus_hi.borrow()]);
         if self.write_enabled {
             self.memory[addr as usize] = *self.data_bus.borrow();
         }

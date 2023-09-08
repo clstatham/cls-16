@@ -60,8 +60,8 @@ pub enum Token<'a> {
 pub enum Mnemonic {
     /// A regular operation that can be directly translated to machine code.
     Regular(Opcode),
-    // /// A compound operation that requires multiple instructions to actually implement.
-    // Compound(Compound),
+    /// A compound operation that requires multiple instructions to actually implement.
+    Compound(Compound),
 }
 
 /// Compound instructions that require more than one machine instruction cycle to execute.
@@ -74,18 +74,18 @@ pub enum Compound {
     /// Equivalent to:
     /// ```text
     /// stl     sp regA
-    /// subi    sp sp $1
+    /// subi    sp $1
     /// sth     sp regA
-    /// subi    sp sp $1
+    /// subi    sp $1
     /// ```
     Push,
     /// Pops a value off the top of the stack and into a register.
     ///
     /// Equivalent to:
     /// ```text
-    /// addi    sp sp $1
+    /// addi    sp $1
     /// ldh     regA sp
-    /// addi    sp sp $1
+    /// addi    sp $1
     /// ldl     regA sp
     /// ```
     Pop,
