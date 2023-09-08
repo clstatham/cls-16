@@ -21,18 +21,16 @@ pub struct WithSpan<'a, T> {
 /// An error for the assembler module of CLS-16.
 #[derive(Debug, Error)]
 pub enum AsmError {
-    #[error("syntax error at ({}:{})", .loc.0, .loc.1)]
+    #[error("on line {}: syntax error", .loc.0)]
     Syntax { loc: (usize, usize), span: String },
-    #[error("found garbage at ({}:{}): {}", .loc.0, loc.1, .span)]
+    #[error("on line {}: found garbage: {}", .loc.0, .span)]
     FoundGarbage { loc: (usize, usize), span: String },
-    #[error("immediate value {0} too large (must be < {})", u16::MAX)]
-    ImmOverflow(u64),
-    #[error("invalid format for instruction")]
-    InvalidInstruction,
-    #[error("unexpected token: {0}")]
-    UnexpectedToken(String),
-    #[error("duplicate label found: {0}")]
-    DuplicateLabel(String),
+    #[error("on line {}: invalid format for instruction", .loc)]
+    InvalidInstruction { loc: usize },
+    #[error("on line {0}: unexpected token: {1}")]
+    UnexpectedToken(usize, String),
+    #[error("on line {0}: duplicate label found: {1}")]
+    DuplicateLabel(usize, String),
     #[error("maximum linker iterations (1024) reached")]
     MaxLinkerIters,
     #[error("undefined reference to symbols: {0:?}")]

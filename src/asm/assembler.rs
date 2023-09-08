@@ -37,9 +37,9 @@ impl<'a, 'b> Instruction<'a> {
         let mut take1 = || {
             let t = toks[0];
             toks = &toks[1..];
-            t.item
+            t
         };
-        if let Token::Mnemonic(op) = take1() {
+        if let Token::Mnemonic(op) = take1().item {
             match op {
                 Mnemonic::Regular(op) => match op {
                     // OpOnly instructions
@@ -60,38 +60,48 @@ impl<'a, 'b> Instruction<'a> {
                         let a = take1();
                         let b = take1();
                         let c = take1();
-                        if let Token::Register(a) = a {
-                            if let Token::Register(b) = b {
-                                if let Token::Register(c) = c {
+                        if let Token::Register(a) = a.item {
+                            if let Token::Register(b) = b.item {
+                                if let Token::Register(c) = c.item {
                                     out.push(Instruction {
                                         op,
                                         format: InstrFormat::RRR(a, b, c),
                                     });
                                 } else {
-                                    return Err(Error::from(AsmError::InvalidInstruction));
+                                    return Err(Error::from(AsmError::InvalidInstruction {
+                                        loc: c.span.location_line() as usize,
+                                    }));
                                 }
                             } else {
-                                return Err(Error::from(AsmError::InvalidInstruction));
+                                return Err(Error::from(AsmError::InvalidInstruction {
+                                    loc: b.span.location_line() as usize,
+                                }));
                             }
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                     // RR instructions
                     Opcode::Ldh | Opcode::Ldl | Opcode::Sth | Opcode::Stl | Opcode::Not => {
                         let a = take1();
                         let b = take1();
-                        if let Token::Register(a) = a {
-                            if let Token::Register(b) = b {
+                        if let Token::Register(a) = a.item {
+                            if let Token::Register(b) = b.item {
                                 out.push(Instruction {
                                     op,
                                     format: InstrFormat::RR(a, b),
                                 });
                             } else {
-                                return Err(Error::from(AsmError::InvalidInstruction));
+                                return Err(Error::from(AsmError::InvalidInstruction {
+                                    loc: b.span.location_line() as usize,
+                                }));
                             }
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                     // RI instructions
@@ -99,13 +109,13 @@ impl<'a, 'b> Instruction<'a> {
                         // LDI is special, because it can be used to load labels (immediate addresses) into a register
                         let a = take1();
                         let imm = take1();
-                        if let Token::Register(a) = a {
-                            if let Token::Immediate(imm) = imm {
+                        if let Token::Register(a) = a.item {
+                            if let Token::Immediate(imm) = imm.item {
                                 out.push(Instruction {
                                     op,
                                     format: InstrFormat::RI(a, Immediate::Linked(imm)),
                                 });
-                            } else if let Token::Label(name) = imm {
+                            } else if let Token::Label(name) = imm.item {
                                 if let Some(label) = known_labels.get(name) {
                                     out.push(Instruction {
                                         op,
@@ -119,45 +129,55 @@ impl<'a, 'b> Instruction<'a> {
                                     discovered_labels.insert(name);
                                 }
                             } else {
-                                return Err(Error::from(AsmError::InvalidInstruction));
+                                return Err(Error::from(AsmError::InvalidInstruction {
+                                    loc: imm.span.location_line() as usize,
+                                }));
                             }
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                     Opcode::Addi | Opcode::Subi => {
                         let a = take1();
                         let imm = take1();
-                        if let Token::Register(a) = a {
-                            if let Token::Immediate(imm) = imm {
+                        if let Token::Register(a) = a.item {
+                            if let Token::Immediate(imm) = imm.item {
                                 out.push(Instruction {
                                     op,
                                     format: InstrFormat::RI(a, Immediate::Linked(imm)),
                                 });
                             } else {
-                                return Err(Error::from(AsmError::InvalidInstruction));
+                                return Err(Error::from(AsmError::InvalidInstruction {
+                                    loc: imm.span.location_line() as usize,
+                                }));
                             }
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                     // R instructions
                     Opcode::Jz | Opcode::Printc | Opcode::Printi => {
                         let a = take1();
-                        if let Token::Register(a) = a {
+                        if let Token::Register(a) = a.item {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::R(a),
                             });
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                 },
                 Mnemonic::Compound(op) => match op {
                     Compound::Push => {
                         let a = take1();
-                        if let Token::Register(a) = a {
+                        if let Token::Register(a) = a.item {
                             // stl     sp regA
                             // subi    sp $1
                             // sth     sp regA
@@ -179,12 +199,14 @@ impl<'a, 'b> Instruction<'a> {
                                 format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
                             });
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                     Compound::Pop => {
                         let a = take1();
-                        if let Token::Register(a) = a {
+                        if let Token::Register(a) = a.item {
                             // addi    sp $1
                             // ldh     regA sp
                             // addi    sp $1
@@ -206,7 +228,9 @@ impl<'a, 'b> Instruction<'a> {
                                 format: InstrFormat::RR(a, Register::SP),
                             });
                         } else {
-                            return Err(Error::from(AsmError::InvalidInstruction));
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
                         }
                     }
                 },
@@ -238,6 +262,7 @@ impl<'a> Assembler<'a> {
 
         // loop over the tokens, converting them into instructions
         while let Some(next_tok) = tokens.first() {
+            tokens = &tokens[1..];
             match next_tok.item {
                 Token::Eof => break,
                 Token::Label(name) => {
@@ -248,7 +273,6 @@ impl<'a> Assembler<'a> {
                         instructions: vec![],
                     };
 
-                    tokens = &tokens[1..];
                     loop {
                         let (rest, maybe_instrs, mut discovered_labels) =
                             Instruction::from_tokens(tokens, self.labels.clone())?;
@@ -267,13 +291,23 @@ impl<'a> Assembler<'a> {
                     }
                     let old = self.labels.insert(name, lab);
                     if let Some(old) = old {
-                        return Err(Error::from(AsmError::DuplicateLabel(old.name.to_owned())));
+                        return Err(Error::from(AsmError::DuplicateLabel(
+                            next_tok.span.location_line() as usize,
+                            old.name.to_owned(),
+                        )));
                     }
                 }
                 // todo: directives
                 _tok => {
                     return Err(Error::from(AsmError::UnexpectedToken(
-                        tokens[0].span.fragment().trim().to_string(),
+                        next_tok.span.location_line() as usize,
+                        next_tok
+                            .span
+                            .fragment()
+                            .split_whitespace()
+                            .next()
+                            .unwrap()
+                            .to_string(),
                     )))
                 }
             }
@@ -342,7 +376,6 @@ impl<'a> Assembler<'a> {
             }
             break;
         }
-        dbg!(&self.labels);
 
         Ok(out.into_boxed_slice())
     }
@@ -351,13 +384,14 @@ impl<'a> Assembler<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_assemble() {
         let program = "
 %start
     ; comment
     ldi     r1 %startthree
-    printi  r1
+    printi  r1 
     halt
 %startthree
     nop

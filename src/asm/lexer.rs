@@ -150,7 +150,12 @@ pub fn lex_program(program: &str) -> Result<Vec<WithSpan<Token<'_>>>> {
     if !garbage.is_empty() {
         Err(AsmError::FoundGarbage {
             loc: (garbage.location_line() as usize, span.get_utf8_column()),
-            span: garbage.fragment().to_string(),
+            span: garbage
+                .fragment()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .to_string(),
         }
         .into())
     } else {
