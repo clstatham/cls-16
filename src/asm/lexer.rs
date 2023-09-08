@@ -4,7 +4,7 @@ use nom::{
     character::complete::{alphanumeric1, line_ending, multispace1},
     combinator::{map, map_res, value},
     multi::many0,
-    sequence::{delimited, preceded, terminated},
+    sequence::{delimited, preceded},
     IResult,
 };
 
@@ -12,7 +12,7 @@ use anyhow::{Error, Result};
 
 use crate::plat::{Opcode, Register};
 
-use super::{AsmError, Compound, Mnemonic, Span, Token};
+use super::{AsmError, Compound, Mnemonic, Span, Token, WithSpan};
 
 impl Compound {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
@@ -27,6 +27,7 @@ impl Opcode {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
         alt((
             value(Self::Halt, tag_no_case("halt")),
+            value(Self::Nop, tag_no_case("nop")),
             value(Self::Add, tag_no_case("add")),
             value(Self::Sub, tag_no_case("sub")),
             value(Self::And, tag_no_case("and")),
@@ -89,7 +90,7 @@ pub fn lex_immediate(inp: Span) -> IResult<Span, u16> {
 }
 
 pub fn lex_label(inp: Span) -> IResult<Span, &str> {
-    map(terminated(alphanumeric1, tag(":")), |s: Span| *s.fragment())(inp)
+    map(preceded(tag("%"), alphanumeric1), |s: Span| *s.fragment())(inp)
 }
 
 pub fn lex_comment(inp: Span) -> IResult<Span, Span> {
@@ -101,19 +102,32 @@ pub fn lex_comment_or_whitespace(inp: Span) -> IResult<Span, Span> {
 }
 
 impl<'a> Token<'a> {
-    pub fn lex(inp: Span<'a>) -> IResult<Span, Self> {
+    pub fn lex(inp: Span<'a>) -> IResult<Span, WithSpan<Self>> {
         alt((
-            map(Mnemonic::lex, Self::Mnemonic),
-            map(lex_label, Self::Label),
-            map(lex_immediate, Self::Immediate),
-            map(Register::lex, Self::Register),
+            map(Mnemonic::lex, |t| WithSpan {
+                span: inp,
+                item: Self::Mnemonic(t),
+            }),
+            map(lex_label, |t| WithSpan {
+                span: inp,
+                item: Self::Label(t),
+            }),
+            map(lex_immediate, |t| WithSpan {
+                span: inp,
+                item: Self::Immediate(t),
+            }),
+            map(Register::lex, |t| WithSpan {
+                span: inp,
+                item: Self::Register(t),
+            }),
         ))(inp)
     }
 }
 
-pub fn lex_program(program: &str) -> Result<Vec<Token<'_>>> {
+/// Lexes assembly program text into a [Vec] of [Token]s.
+pub fn lex_program(program: &str) -> Result<Vec<WithSpan<Token<'_>>>> {
     let span = Span::new_extra(program, program);
-    let (garbage, toks) = many0(delimited(
+    let (garbage, mut toks) = many0(delimited(
         many0(lex_comment_or_whitespace),
         Token::lex,
         many0(lex_comment_or_whitespace),
@@ -129,6 +143,10 @@ pub fn lex_program(program: &str) -> Result<Vec<Token<'_>>> {
             span: span.fragment().to_string(),
         })
     })?;
+    toks.push(WithSpan {
+        span: garbage,
+        item: Token::Eof,
+    });
     if !garbage.is_empty() {
         Err(AsmError::FoundGarbage {
             loc: (garbage.location_line() as usize, span.get_utf8_column()),
@@ -147,10 +165,11 @@ mod tests {
     #[test]
     fn test_lex_program() {
         let prog = "
-start:
+%start
     ; im a comment!
     ldi     r1 $0x1337
     printi  r1
+    nop
     halt
 ";
         dbg!(lex_program(prog).unwrap());

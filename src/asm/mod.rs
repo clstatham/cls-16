@@ -5,9 +5,18 @@ use thiserror::Error;
 
 use crate::plat::{Opcode, Register};
 
+pub mod assembler;
 pub mod lexer;
 
+pub use assembler::Assembler;
+
 pub type Span<'a> = LocatedSpan<&'a str, &'a str>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub struct WithSpan<'a, T> {
+    pub span: Span<'a>,
+    pub item: T,
+}
 
 /// An error for the assembler module of CLS-16.
 #[derive(Debug, Error)]
@@ -18,6 +27,16 @@ pub enum AsmError {
     FoundGarbage { loc: (usize, usize), span: String },
     #[error("immediate value {0} too large (must be < {})", u16::MAX)]
     ImmOverflow(u64),
+    #[error("invalid format for instruction")]
+    InvalidInstruction,
+    #[error("unexpected token: {0}")]
+    UnexpectedToken(String),
+    #[error("duplicate label found: {0}")]
+    DuplicateLabel(String),
+    #[error("maximum linker iterations (1024) reached")]
+    MaxLinkerIters,
+    #[error("undefined reference to symbols: {0:?}")]
+    UndefinedReferences(Vec<String>),
 }
 
 /// An assembly language token. Output for the lexer, input for the parser.
@@ -57,18 +76,18 @@ pub enum Compound {
     /// Equivalent to:
     /// ```text
     /// stl     sp regA
-    /// sub     sp sp $1
+    /// subi    sp sp $1
     /// sth     sp regA
-    /// sub     sp sp $1
+    /// subi    sp sp $1
     /// ```
     Push,
     /// Pops a value off the top of the stack and into a register.
     ///
     /// Equivalent to:
     /// ```text
-    /// add     sp sp $1
+    /// addi    sp sp $1
     /// ldh     regA sp
-    /// add     sp sp $1
+    /// addi    sp sp $1
     /// ldl     regA sp
     /// ```
     Pop,

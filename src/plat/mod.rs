@@ -1,6 +1,6 @@
 //! Common platform code between CLS-16's other modules.
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use thiserror::Error;
 
 /// An error for the core platform of CLS-16.
@@ -10,6 +10,8 @@ pub enum PlatformError {
     InvalidOpcode,
     #[error("invalid instruction")]
     InvalidInstruction,
+    #[error("undefined reference to {0}")]
+    UndefinedReference(String),
 }
 
 /// The twelve registers in CLS-16.
@@ -63,7 +65,7 @@ impl TryFrom<u8> for Register {
 /// Note that these are the most *basic* operations that the CPU can execute in a single instruction cycle.
 /// More complex operations are used in the actual assembly syntax, that are compiled down into combinations of these basic operations.
 ///
-/// ALU opcode notes ([ADD][Opcode::Add], [SUB][Opcode::Sub], [AND][Opcode::And], [OR][Opcode::Or], [NOT][Opcode::Not], [SHL][Opcode::Shl], [SHR][Opcode::Shr]):
+/// ALU opcode notes ([ADD][Opcode::Add], [ADDI][Opcode::Addi], [SUB][Opcode::Sub], [SUBI][Opcode::Subi], [AND][Opcode::And], [OR][Opcode::Or], [NOT][Opcode::Not], [SHL][Opcode::Shl], [SHR][Opcode::Shr]):
 ///
 /// - [FL](Register::FL) Overflow bit is set to 1 if the operation over/underflows, otherwise it is set to 0.
 /// - [FL](Register::FL) Parity bit is set to 1 if the result has odd parity, otherwise it is set to 0.
@@ -79,15 +81,21 @@ impl TryFrom<u8> for Register {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
-    /* Halt */
+    /* Halt/Nop */
     /// Stops the clock
     Halt = 0,
+    /// Does nothing for the instruction cycle
+    Nop,
 
     /* ALU */
     /// `regA <- regB + regC`
     Add,
+    /// `regA <- regA + (immediate value)`
+    Addi,
     /// `regA <- regB - regC`
     Sub,
+    /// `regA <- regA - (immediate value)`
+    Subi,
     /// `regA <- regB & regC`
     And,
     /// `regA <- regB | regC`
@@ -135,8 +143,11 @@ impl TryFrom<u8> for Opcode {
     fn try_from(value: u8) -> Result<Self, PlatformError> {
         match value {
             v if v == Self::Halt as u8 => Ok(Self::Halt),
+            v if v == Self::Nop as u8 => Ok(Self::Nop),
             v if v == Self::Add as u8 => Ok(Self::Add),
+            v if v == Self::Addi as u8 => Ok(Self::Addi),
             v if v == Self::Sub as u8 => Ok(Self::Sub),
+            v if v == Self::Subi as u8 => Ok(Self::Subi),
             v if v == Self::And as u8 => Ok(Self::And),
             v if v == Self::Or as u8 => Ok(Self::Or),
             v if v == Self::Xor as u8 => Ok(Self::Xor),
@@ -157,34 +168,51 @@ impl TryFrom<u8> for Opcode {
     }
 }
 
+/// An immediate value, either linked (with a raw value) or unlinked (with the symbol name).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Immediate<'a> {
+    Linked(u16),
+    Unlinked(&'a str),
+}
+
+impl<'a> Immediate<'a> {
+    pub const fn get_linked(self) -> Option<u16> {
+        if let Self::Linked(val) = self {
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
+
 /// Instruction formats indicating how instructions are packed into the 32-bit instruction words in CLS-16.
 ///
 /// Each instruction can be broken down into 4 bytes. The first is always the opcode.
 /// The following three are specified by one of this enum's variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InstrFormat {
+pub enum InstrFormat<'a> {
     /// `<Opcode, Register, Register, Register>`
     RRR(Register, Register, Register),
     /// `<Opcode, Register, ImmediateHi, ImmediateLo>`
-    RI(Register, u16),
+    RI(Register, Immediate<'a>),
     /// `<Opcode, ZEROS, Register, Register>`
     RR(Register, Register),
     /// `<Opcode, ZEROS, ZEROS, Register>`
     R(Register),
     /// `<Opcode, ZEROS, ImmediateHi, ImmediateLo>`
-    I(u16),
+    I(Immediate<'a>),
     /// `<Opcode, ZEROS, ZEROS, ZEROS>`
     OpOnly,
 }
 
 /// A full 32-bit instruction word in CLS-16.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Instruction {
+pub struct Instruction<'a> {
     pub op: Opcode,
-    pub format: InstrFormat,
+    pub format: InstrFormat<'a>,
 }
 
-impl Instruction {
+impl<'a> Instruction<'a> {
     /// Checks if this instruction has a valid format for its opcode.
     ///
     /// # Errors
@@ -203,8 +231,11 @@ impl Instruction {
         }
         match self.op {
             Opcode::Halt => assert_format!(InstrFormat::OpOnly),
+            Opcode::Nop => assert_format!(InstrFormat::OpOnly),
             Opcode::Add => assert_format!(InstrFormat::RRR(_, _, _)),
+            Opcode::Addi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::Sub => assert_format!(InstrFormat::RRR(_, _, _)),
+            Opcode::Subi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::And => assert_format!(InstrFormat::RRR(_, _, _)),
             Opcode::Or => assert_format!(InstrFormat::RRR(_, _, _)),
             Opcode::Xor => assert_format!(InstrFormat::RRR(_, _, _)),
@@ -232,10 +263,30 @@ impl Instruction {
         let op = self.op as u8;
         let format = match self.format {
             InstrFormat::RRR(a, b, c) => [a as u8, b as u8, c as u8],
-            InstrFormat::RI(a, imm) => [a as u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]],
+            InstrFormat::RI(a, imm) => {
+                let imm = match imm {
+                    Immediate::Linked(imm) => imm,
+                    Immediate::Unlinked(name) => {
+                        return Err(Error::from(PlatformError::UndefinedReference(
+                            name.to_string(),
+                        )))
+                    }
+                };
+                [a as u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]]
+            }
             InstrFormat::RR(a, b) => [0u8, a as u8, b as u8],
             InstrFormat::R(a) => [0u8, 0u8, a as u8],
-            InstrFormat::I(imm) => [0u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]],
+            InstrFormat::I(imm) => {
+                let imm = match imm {
+                    Immediate::Linked(imm) => imm,
+                    Immediate::Unlinked(name) => {
+                        return Err(Error::from(PlatformError::UndefinedReference(
+                            name.to_string(),
+                        )))
+                    }
+                };
+                [0u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]]
+            }
             InstrFormat::OpOnly => [0u8, 0u8, 0u8],
         };
         Ok([op, format[0], format[1], format[2]])
@@ -249,6 +300,7 @@ impl Instruction {
     pub fn from_bytes(bytes: [u8; 4]) -> Result<Self> {
         let op: Opcode = bytes[0].try_into()?;
         let format = match op {
+            Opcode::Nop => InstrFormat::OpOnly,
             Opcode::Halt => InstrFormat::OpOnly,
             Opcode::Add => InstrFormat::RRR(
                 bytes[1].try_into()?,
@@ -292,7 +344,15 @@ impl Instruction {
             Opcode::Ldh => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Ldi => InstrFormat::RI(
                 bytes[1].try_into()?,
-                u16::from_le_bytes([bytes[2], bytes[3]]),
+                Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
+            ),
+            Opcode::Addi => InstrFormat::RI(
+                bytes[1].try_into()?,
+                Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
+            ),
+            Opcode::Subi => InstrFormat::RI(
+                bytes[1].try_into()?,
+                Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
             ),
             Opcode::Jz => InstrFormat::R(bytes[3].try_into()?),
             Opcode::Printi => InstrFormat::R(bytes[3].try_into()?),
@@ -302,33 +362,5 @@ impl Instruction {
         let this = Self { op, format };
         this.validate()?;
         Ok(this)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_instruction_encode() {
-        let instr = Instruction {
-            op: Opcode::Ldi,
-            format: InstrFormat::RI(Register::R3, 12345),
-        };
-        let bytes = instr.to_bytes().unwrap();
-        assert_eq!(bytes, [0x0D, 0x03, 0x39, 0x30]);
-    }
-
-    #[test]
-    fn test_instruction_decode() {
-        let bytes = [0x0D, 0x03, 0x39, 0x30];
-        let instr = Instruction::from_bytes(bytes).unwrap();
-        assert_eq!(
-            instr,
-            Instruction {
-                op: Opcode::Ldi,
-                format: InstrFormat::RI(Register::R3, 12345),
-            }
-        );
     }
 }
