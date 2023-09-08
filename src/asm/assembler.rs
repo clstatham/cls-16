@@ -3,10 +3,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     asm::{lexer::lex_program, Mnemonic, Span},
-    plat::{Immediate, InstrFormat, Instruction, Opcode, PlatformError, Register},
+    plat::{Immediate, InstrFormat, Instruction, Opcode, PlatformError},
 };
 
-use super::{AsmError, Compound, Token, WithSpan};
+use super::{AsmError, Token, WithSpan};
 
 /// A basic block of code in an assembly listing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,13 +50,7 @@ impl<'a, 'b> Instruction<'a> {
                         });
                     }
                     // RRR instructions
-                    Opcode::Add
-                    | Opcode::And
-                    | Opcode::Or
-                    | Opcode::Shl
-                    | Opcode::Shr
-                    | Opcode::Sub
-                    | Opcode::Xor => {
+                    Opcode::Add | Opcode::And | Opcode::Or | Opcode::Sub | Opcode::Xor => {
                         let a = take1();
                         let b = take1();
                         let c = take1();
@@ -84,7 +78,13 @@ impl<'a, 'b> Instruction<'a> {
                         }
                     }
                     // RR instructions
-                    Opcode::Ldh | Opcode::Ldl | Opcode::Sth | Opcode::Stl | Opcode::Not => {
+                    Opcode::Ldh
+                    | Opcode::Ldl
+                    | Opcode::Sth
+                    | Opcode::Stl
+                    | Opcode::Not
+                    | Opcode::Shl
+                    | Opcode::Shr => {
                         let a = take1();
                         let b = take1();
                         if let Token::Register(a) = a.item {
@@ -139,26 +139,6 @@ impl<'a, 'b> Instruction<'a> {
                             }));
                         }
                     }
-                    Opcode::Addi | Opcode::Subi => {
-                        let a = take1();
-                        let imm = take1();
-                        if let Token::Register(a) = a.item {
-                            if let Token::Immediate(imm) = imm.item {
-                                out.push(Instruction {
-                                    op,
-                                    format: InstrFormat::RI(a, Immediate::Linked(imm)),
-                                });
-                            } else {
-                                return Err(Error::from(AsmError::InvalidInstruction {
-                                    loc: imm.span.location_line() as usize,
-                                }));
-                            }
-                        } else {
-                            return Err(Error::from(AsmError::InvalidInstruction {
-                                loc: a.span.location_line() as usize,
-                            }));
-                        }
-                    }
                     // R instructions
                     Opcode::Jz | Opcode::Printc | Opcode::Printi => {
                         let a = take1();
@@ -166,66 +146,6 @@ impl<'a, 'b> Instruction<'a> {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::R(a),
-                            });
-                        } else {
-                            return Err(Error::from(AsmError::InvalidInstruction {
-                                loc: a.span.location_line() as usize,
-                            }));
-                        }
-                    }
-                },
-                Mnemonic::Compound(op) => match op {
-                    Compound::Push => {
-                        let a = take1();
-                        if let Token::Register(a) = a.item {
-                            // stl     sp regA
-                            // subi    sp $1
-                            // sth     sp regA
-                            // subi    sp $1
-                            out.push(Instruction {
-                                op: Opcode::Stl,
-                                format: InstrFormat::RR(Register::SP, a),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Subi,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Sth,
-                                format: InstrFormat::RR(Register::SP, a),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Subi,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
-                            });
-                        } else {
-                            return Err(Error::from(AsmError::InvalidInstruction {
-                                loc: a.span.location_line() as usize,
-                            }));
-                        }
-                    }
-                    Compound::Pop => {
-                        let a = take1();
-                        if let Token::Register(a) = a.item {
-                            // addi    sp $1
-                            // ldh     regA sp
-                            // addi    sp $1
-                            // ldl     regA sp
-                            out.push(Instruction {
-                                op: Opcode::Addi,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Ldh,
-                                format: InstrFormat::RR(a, Register::SP),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Addi,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
-                            });
-                            out.push(Instruction {
-                                op: Opcode::Ldl,
-                                format: InstrFormat::RR(a, Register::SP),
                             });
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
@@ -314,7 +234,7 @@ impl<'a> Assembler<'a> {
         }
 
         // build the binary from the parsed instructions
-        let mut out = vec![0u8, 0u8]; // null word for null-pointer catching
+        let mut out = vec![0u8, 0u8, 0u8, 0u8]; // null instruction word for null-pointer catching
         let mut iters = 0;
         'link: loop {
             let labels_clone = self.labels.clone();

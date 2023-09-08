@@ -52,7 +52,7 @@ impl Mnemonic {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
         alt((
             map(Opcode::lex, Self::Regular),
-            map(Compound::lex, Self::Compound),
+            // map(Compound::lex, Self::Compound),
         ))(inp)
     }
 }
@@ -70,7 +70,6 @@ impl Register {
             value(Self::R7, tag_no_case("r7")),
             value(Self::R8, tag_no_case("r8")),
             value(Self::PC, tag_no_case("pc")),
-            value(Self::SP, tag_no_case("sp")),
             value(Self::FL, tag_no_case("fl")),
         ))(inp)
     }

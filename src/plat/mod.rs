@@ -14,9 +14,11 @@ pub enum PlatformError {
     UndefinedReference(String),
 }
 
-/// The twelve registers in CLS-16.
+/// The registers in CLS-16.
 ///
-/// `R1` - `R8` are general purpose registers. `PC`, `SP`, `FL`, and `R0` are special.
+/// `R1` - `R8` are general purpose registers.
+/// `PC` and `R0` are special.
+/// `IH`, `IL`, and `FL` are VERY special as they cannot be identified in binary; they are only used internally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Register {
@@ -32,8 +34,10 @@ pub enum Register {
     R8,
     /// Program counter
     PC,
-    /// Stack pointer
-    SP,
+    /// High instruction register
+    IH,
+    /// Low instruction register
+    IL,
     /// Status flags
     FL,
 }
@@ -53,7 +57,6 @@ impl TryFrom<u8> for Register {
             v if v == Self::R7 as u8 => Ok(Self::R7),
             v if v == Self::R8 as u8 => Ok(Self::R8),
             v if v == Self::PC as u8 => Ok(Self::PC),
-            v if v == Self::SP as u8 => Ok(Self::SP),
             v if v == Self::FL as u8 => Ok(Self::FL),
             _ => Err(PlatformError::InvalidOpcode),
         }
@@ -67,8 +70,7 @@ impl TryFrom<u8> for Register {
 ///
 /// ALU opcode notes ([ADD][Opcode::Add], [ADDI][Opcode::Addi], [SUB][Opcode::Sub], [SUBI][Opcode::Subi], [AND][Opcode::And], [OR][Opcode::Or], [NOT][Opcode::Not], [SHL][Opcode::Shl], [SHR][Opcode::Shr]):
 ///
-/// - [FL](Register::FL) Overflow bit is set to 1 if the operation over/underflows, otherwise it is set to 0.
-/// - [FL](Register::FL) Parity bit is set to 1 if the result has odd parity, otherwise it is set to 0.
+/// - [FL](Register::FL) Carry bit is set to 1 if the operation overflows, otherwise it is set to 0.
 /// - [FL](Register::FL) Zero bit is set to 1 if the result is zero, otherwise it is set to 0.
 /// - When [R0](Register::R0) is used as a destination, the result is discarded, but **the [FL](Register::FL) bits are still set.**
 ///
@@ -77,25 +79,25 @@ impl TryFrom<u8> for Register {
 /// - The memory addresses are given by a register.
 /// - `xxL` will operate on the lower 8 bits of the relevant register.
 /// - `xxH` will operate on the higher 8 bits of the relevant register.
-/// - `LDI` will load/store 16-bit immediate values into the whole register, setting the other bits to 0.
+/// - `LDI` will load/store 16-bit immediate values into the whole register (starting at the lowest bit), setting the other bits to 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
     /* Halt/Nop */
-    /// Stops the clock
+    /// Stops all counters.
     Halt = 0,
-    /// Does nothing for the instruction cycle
+    /// Does nothing for the instruction cycle.
     Nop,
+
+    /* Registers */
+    /// `regA <- (immediate value)`
+    Ldi,
 
     /* ALU */
     /// `regA <- regB + regC`
     Add,
-    /// `regA <- regA + (immediate value)`
-    Addi,
     /// `regA <- regB - regC`
     Sub,
-    /// `regA <- regA - (immediate value)`
-    Subi,
     /// `regA <- regB & regC`
     And,
     /// `regA <- regB | regC`
@@ -104,9 +106,11 @@ pub enum Opcode {
     Xor,
     /// `regA <- ~regB`
     Not,
-    /// `regA <- regB << regC`
+
+    /* Shift Unit */
+    /// `regA <- regB << 1`
     Shl,
-    /// `regA <- regB >> regC`
+    /// `regA <- regB >> 1`
     Shr,
 
     /* Memory */
@@ -118,8 +122,6 @@ pub enum Opcode {
     Ldl,
     /// `regA.HI <- mem[regB]`
     Ldh,
-    /// `regA <- (immediate value)`
-    Ldi,
 
     /* Branching */
     /// "Jump if Zero"
@@ -145,9 +147,7 @@ impl TryFrom<u8> for Opcode {
             v if v == Self::Halt as u8 => Ok(Self::Halt),
             v if v == Self::Nop as u8 => Ok(Self::Nop),
             v if v == Self::Add as u8 => Ok(Self::Add),
-            v if v == Self::Addi as u8 => Ok(Self::Addi),
             v if v == Self::Sub as u8 => Ok(Self::Sub),
-            v if v == Self::Subi as u8 => Ok(Self::Subi),
             v if v == Self::And as u8 => Ok(Self::And),
             v if v == Self::Or as u8 => Ok(Self::Or),
             v if v == Self::Xor as u8 => Ok(Self::Xor),
@@ -219,29 +219,32 @@ impl<'a> Instruction<'a> {
     ///
     /// This function will return an error if the instruction's format is invalid for its opcode.
     pub fn validate(self) -> Result<()> {
+        if self.is_valid() {
+            Ok(())
+        } else {
+            Err(Error::from(PlatformError::InvalidInstruction))
+        }
+    }
+
+    /// Returns `true` if this instruction has a valid format for its opcode.
+    pub const fn is_valid(self) -> bool {
         #[doc(hidden)]
         macro_rules! assert_format {
             ($fmt:pat) => {
-                if matches!(self.format, $fmt) {
-                    Ok(())
-                } else {
-                    Err(PlatformError::InvalidInstruction.into())
-                }
+                matches!(self.format, $fmt)
             };
         }
         match self.op {
             Opcode::Halt => assert_format!(InstrFormat::OpOnly),
             Opcode::Nop => assert_format!(InstrFormat::OpOnly),
             Opcode::Add => assert_format!(InstrFormat::RRR(_, _, _)),
-            Opcode::Addi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::Sub => assert_format!(InstrFormat::RRR(_, _, _)),
-            Opcode::Subi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::And => assert_format!(InstrFormat::RRR(_, _, _)),
             Opcode::Or => assert_format!(InstrFormat::RRR(_, _, _)),
             Opcode::Xor => assert_format!(InstrFormat::RRR(_, _, _)),
             Opcode::Not => assert_format!(InstrFormat::RR(_, _)),
-            Opcode::Shl => assert_format!(InstrFormat::RRR(_, _, _)),
-            Opcode::Shr => assert_format!(InstrFormat::RRR(_, _, _)),
+            Opcode::Shl => assert_format!(InstrFormat::RR(_, _)),
+            Opcode::Shr => assert_format!(InstrFormat::RR(_, _)),
             Opcode::Stl => assert_format!(InstrFormat::RR(_, _)),
             Opcode::Sth => assert_format!(InstrFormat::RR(_, _)),
             Opcode::Ldl => assert_format!(InstrFormat::RR(_, _)),
@@ -328,29 +331,13 @@ impl<'a> Instruction<'a> {
                 bytes[3].try_into()?,
             ),
             Opcode::Not => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
-            Opcode::Shl => InstrFormat::RRR(
-                bytes[1].try_into()?,
-                bytes[2].try_into()?,
-                bytes[3].try_into()?,
-            ),
-            Opcode::Shr => InstrFormat::RRR(
-                bytes[1].try_into()?,
-                bytes[2].try_into()?,
-                bytes[3].try_into()?,
-            ),
+            Opcode::Shl => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
+            Opcode::Shr => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Stl => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Sth => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Ldl => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Ldh => InstrFormat::RR(bytes[2].try_into()?, bytes[3].try_into()?),
             Opcode::Ldi => InstrFormat::RI(
-                bytes[1].try_into()?,
-                Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
-            ),
-            Opcode::Addi => InstrFormat::RI(
-                bytes[1].try_into()?,
-                Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
-            ),
-            Opcode::Subi => InstrFormat::RI(
                 bytes[1].try_into()?,
                 Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
             ),

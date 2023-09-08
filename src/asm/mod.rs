@@ -31,7 +31,7 @@ pub enum AsmError {
     UnexpectedToken(usize, String),
     #[error("on line {0}: duplicate label found: {1}")]
     DuplicateLabel(usize, String),
-    #[error("maximum linker iterations (1024) reached")]
+    #[error("maximum linker iterations reached")]
     MaxLinkerIters,
     #[error("undefined reference to symbols: {0:?}")]
     UndefinedReferences(Vec<String>),
@@ -60,8 +60,8 @@ pub enum Token<'a> {
 pub enum Mnemonic {
     /// A regular operation that can be directly translated to machine code.
     Regular(Opcode),
-    /// A compound operation that requires multiple instructions to actually implement.
-    Compound(Compound),
+    // /// A compound operation that requires multiple instructions to actually implement.
+    // Compound(Compound),
 }
 
 /// Compound instructions that require more than one machine instruction cycle to execute.
