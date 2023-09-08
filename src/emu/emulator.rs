@@ -18,7 +18,8 @@ use super::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmuState {
-    Run,
+    Continue,
+    ContinueDontUpdatePc,
     Halt,
 }
 
@@ -45,7 +46,7 @@ impl<'a> Emulator<'a> {
             registers: EmuRegisters::default(),
             alu: Alu::new(),
             ram: Ram::new(),
-            state: EmuState::Run,
+            state: EmuState::Continue,
             micro_op_cache: VecDeque::new(),
             clock,
             rt,
@@ -68,28 +69,26 @@ impl<'a> Emulator<'a> {
             // snap!
             self.clock.tick().await;
 
-            for _ in 0..2 {
-                // paranoid multiple updates
-                tokio::join!(
-                    async { self.alu.update() },
-                    async { self.ram.update() },
-                    async { self.registers.r1.update() },
-                    async { self.registers.r2.update() },
-                    async { self.registers.r3.update() },
-                    async { self.registers.r4.update() },
-                    async { self.registers.r5.update() },
-                    async { self.registers.r6.update() },
-                    async { self.registers.r7.update() },
-                    async { self.registers.r8.update() },
-                    async { self.registers.pc.update() },
-                    async { self.registers.ih.update() },
-                    async { self.registers.il.update() },
-                    async { self.registers.fl.update() },
-                );
-            }
+            tokio::join!(
+                async { self.alu.update() },
+                async { self.ram.update() },
+                async { self.registers.r0.update() },
+                async { self.registers.r1.update() },
+                async { self.registers.r2.update() },
+                async { self.registers.r3.update() },
+                async { self.registers.r4.update() },
+                async { self.registers.r5.update() },
+                async { self.registers.r6.update() },
+                async { self.registers.r7.update() },
+                async { self.registers.r8.update() },
+                async { self.registers.pc.update() },
+                async { self.registers.ih.update() },
+                async { self.registers.il.update() },
+                async { self.registers.fl.update() },
+            );
 
             if let Some(op) = self.micro_op_cache.pop_front() {
-                log::debug!("> {:?}", op);
+                log::trace!("> {:?}", op);
                 match op {
                     MicroOp::Halt => {
                         self.state = EmuState::Halt;
@@ -151,18 +150,25 @@ impl<'a> Emulator<'a> {
                     MicroOp::WriteRam => self.ram.write(),
                     MicroOp::NoWriteRam => self.ram.no_write(),
                     MicroOp::SetRamLoopback => self.ram.loopback(),
+                    MicroOp::SetPc(reg) => {
+                        let lo = *self.registers.subscribe_lo(reg).borrow();
+                        let hi = *self.registers.subscribe_hi(reg).borrow();
+                        self.registers.pc.value = (lo as u16) << 8 | (hi as u16);
+                        self.state = EmuState::ContinueDontUpdatePc;
+                    }
                     MicroOp::SetPcIfZero(reg) => {
                         let fl = Fl::from_bits_truncate(self.registers.fl.value);
                         if fl.contains(Fl::ZERO) {
                             let lo = *self.registers.subscribe_lo(reg).borrow();
                             let hi = *self.registers.subscribe_hi(reg).borrow();
                             self.registers.pc.value = (lo as u16) << 8 | (hi as u16);
+                            self.state = EmuState::ContinueDontUpdatePc;
                         }
                     }
                     MicroOp::Printi(reg) => {
                         let lo = *self.registers.subscribe_lo(reg).borrow();
                         let hi = *self.registers.subscribe_hi(reg).borrow();
-                        let value = (lo as u16) << 8 | (hi as u16);
+                        let value = u16::from_le_bytes([lo, hi]);
                         println!("{}", value);
                     }
                     MicroOp::Printc(reg) => {
@@ -173,13 +179,17 @@ impl<'a> Emulator<'a> {
                     }
                 }
             } else {
-                self.registers.pc.value += 4;
+                if self.state == EmuState::ContinueDontUpdatePc {
+                    self.state = EmuState::Continue;
+                } else {
+                    self.registers.pc.value += 4;
+                }
                 let current_instr = &self.program_memory
                     [self.registers.pc.value as usize..self.registers.pc.value as usize + 4];
                 self.registers.ih.value =
-                    (current_instr[1] as u16) << 8 | (current_instr[0] as u16);
+                    (current_instr[0] as u16) << 8 | (current_instr[1] as u16);
                 self.registers.il.value =
-                    (current_instr[3] as u16) << 8 | (current_instr[2] as u16);
+                    (current_instr[2] as u16) << 8 | (current_instr[3] as u16);
 
                 let current_instr = Instruction::from_bytes([
                     current_instr[0],

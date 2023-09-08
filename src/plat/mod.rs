@@ -131,6 +131,8 @@ pub enum Opcode {
     /// }
     /// ```
     Jz,
+    /// `PC <- regA`
+    Jmp,
 
     /* Debugging */
     /// Prints the value in `regA` to the debug monitor of the emulator.
@@ -159,6 +161,7 @@ impl TryFrom<u8> for Opcode {
             v if v == Self::Ldl as u8 => Ok(Self::Ldl),
             v if v == Self::Ldh as u8 => Ok(Self::Ldh),
             v if v == Self::Ldi as u8 => Ok(Self::Ldi),
+            v if v == Self::Jmp as u8 => Ok(Self::Jmp),
             v if v == Self::Jz as u8 => Ok(Self::Jz),
             v if v == Self::Printi as u8 => Ok(Self::Printi),
             v if v == Self::Printc as u8 => Ok(Self::Printc),
@@ -251,6 +254,7 @@ impl<'a> Instruction<'a> {
             Opcode::Ldh => assert_format!(InstrFormat::RR(_, _)),
             Opcode::Ldi => assert_format!(InstrFormat::RI(_, _)),
             Opcode::Jz => assert_format!(InstrFormat::R(_)),
+            Opcode::Jmp => assert_format!(InstrFormat::R(_)),
             Opcode::Printi => assert_format!(InstrFormat::R(_)),
             Opcode::Printc => assert_format!(InstrFormat::R(_)),
         }
@@ -269,11 +273,7 @@ impl<'a> Instruction<'a> {
             InstrFormat::RI(a, imm) => {
                 let imm = match imm {
                     Immediate::Linked(imm) => imm,
-                    Immediate::Unlinked(name) => {
-                        return Err(Error::from(PlatformError::UndefinedReference(
-                            name.to_string(),
-                        )))
-                    }
+                    Immediate::Unlinked(_name) => 0,
                 };
                 [a as u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]]
             }
@@ -282,11 +282,7 @@ impl<'a> Instruction<'a> {
             InstrFormat::I(imm) => {
                 let imm = match imm {
                     Immediate::Linked(imm) => imm,
-                    Immediate::Unlinked(name) => {
-                        return Err(Error::from(PlatformError::UndefinedReference(
-                            name.to_string(),
-                        )))
-                    }
+                    Immediate::Unlinked(_name) => 0,
                 };
                 [0u8, imm.to_le_bytes()[0], imm.to_le_bytes()[1]]
             }
@@ -341,6 +337,7 @@ impl<'a> Instruction<'a> {
                 bytes[1].try_into()?,
                 Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]])),
             ),
+            Opcode::Jmp => InstrFormat::R(bytes[3].try_into()?),
             Opcode::Jz => InstrFormat::R(bytes[3].try_into()?),
             Opcode::Printi => InstrFormat::R(bytes[3].try_into()?),
             Opcode::Printc => InstrFormat::R(bytes[3].try_into()?),

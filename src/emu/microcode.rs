@@ -67,7 +67,9 @@ pub enum MicroOp {
     SetRamLoopback,
 
     /* Branching */
-    /// Routes [PC][Register::PC]'s input bus to the given register's output bus if [FL][Register::FL]'s "zero" bit is 1.
+    /// Sets [PC][Register::PC] to the current value at the given register's output bus.
+    SetPc(Register),
+    /// Sets [PC][Register::PC] to the current value at the given register's output bus if [FL][Register::FL]'s "zero" bit is 1.
     SetPcIfZero(Register),
 
     /* Debugging */
@@ -193,6 +195,7 @@ impl<'a> Instruction<'a> {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
+            (Opcode::Jmp, InstrFormat::R(addr)) => vec![MicroOp::SetPc(addr)],
             (Opcode::Jz, InstrFormat::R(addr)) => vec![MicroOp::SetPcIfZero(addr)],
             _ => unreachable!("Invalid instruction found which wasn't caught by validate()"),
         };

@@ -117,9 +117,31 @@ impl Default for SpecialReg {
     }
 }
 
+pub struct R0 {
+    tx: Sender<u8>,
+}
+
+impl R0 {
+    pub fn new() -> Self {
+        let (tx, _) = channel(0);
+        Self { tx }
+    }
+
+    pub fn update(&self) {
+        self.tx.send_replace(0);
+    }
+}
+
+impl Default for R0 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The full set of registers in the emulator.
 #[derive(Default)]
 pub struct EmuRegisters {
+    pub r0: R0,
     pub r1: GpReg,
     pub r2: GpReg,
     pub r3: GpReg,
@@ -212,7 +234,7 @@ impl EmuRegisters {
 
     pub fn subscribe_hi(&self, reg: Register) -> Receiver<u8> {
         match reg {
-            Register::R0 => todo!(),
+            Register::R0 => self.r0.tx.subscribe(),
             Register::R1 => self.r1.output_bus_hi.subscribe(),
             Register::R2 => self.r2.output_bus_hi.subscribe(),
             Register::R3 => self.r3.output_bus_hi.subscribe(),
@@ -230,7 +252,7 @@ impl EmuRegisters {
 
     pub fn subscribe_lo(&self, reg: Register) -> Receiver<u8> {
         match reg {
-            Register::R0 => todo!(),
+            Register::R0 => self.r0.tx.subscribe(),
             Register::R1 => self.r1.output_bus_lo.subscribe(),
             Register::R2 => self.r2.output_bus_lo.subscribe(),
             Register::R3 => self.r3.output_bus_lo.subscribe(),

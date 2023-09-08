@@ -41,6 +41,7 @@ impl Opcode {
             value(Self::Ldl, tag_no_case("ldl")),
             value(Self::Ldh, tag_no_case("ldh")),
             value(Self::Ldi, tag_no_case("ldi")),
+            value(Self::Jmp, tag_no_case("jmp")),
             value(Self::Jz, tag_no_case("jz")),
             value(Self::Printi, tag_no_case("printi")),
             value(Self::Printc, tag_no_case("printc")),
@@ -69,8 +70,6 @@ impl Register {
             value(Self::R6, tag_no_case("r6")),
             value(Self::R7, tag_no_case("r7")),
             value(Self::R8, tag_no_case("r8")),
-            value(Self::PC, tag_no_case("pc")),
-            value(Self::FL, tag_no_case("fl")),
         ))(inp)
     }
 }
