@@ -3,7 +3,6 @@ use std::{collections::VecDeque, time::Duration};
 use anyhow::Result;
 use tokio::{
     runtime::{Builder, Runtime},
-    sync::watch::{channel, Sender},
     time::{interval, Interval},
 };
 
@@ -16,13 +15,20 @@ use super::{
     registers::{EmuRegisters, Fl},
 };
 
+/// The emulator's current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmuState {
+    /// The emulator is allowed to run, and the PC register will be incrememeted by 4 if the end of an instruction occurs on the next clock cycle.
     Continue,
+    /// The emulator is allowed to run, and the PC register will NOT be incrememeted on the next end-of-instruction encountered. Used for jumps.
+    ///
+    /// Note: This automatically switches to [Continue][EmuState::Continue] after the current instruction finishes.
     ContinueDontUpdatePc,
+    /// Halt execution.
     Halt,
 }
 
+/// The main emulation context for CLS-16.
 pub struct Emulator<'a> {
     pub registers: EmuRegisters,
     pub alu: Alu,
@@ -35,6 +41,11 @@ pub struct Emulator<'a> {
 }
 
 impl<'a> Emulator<'a> {
+    /// Loads a binary program into a new [Emulator] instance.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the Tokio runtime fails to initialize.
     pub fn new(program: &'a [u8], clock_rate_hz: f64) -> Result<Self> {
         let rt = Builder::new_current_thread()
             .enable_time()
@@ -54,6 +65,7 @@ impl<'a> Emulator<'a> {
         Ok(this)
     }
 
+    /// Runs the emulator, stepping through instructions until it reaches a halt state.
     pub fn run_until_halt(&mut self) -> Result<()> {
         while self.state != EmuState::Halt {
             self.step()?;
@@ -61,6 +73,7 @@ impl<'a> Emulator<'a> {
         Ok(())
     }
 
+    /// Steps a single CPU clock cycle.
     pub fn step(&mut self) -> Result<()> {
         if self.state == EmuState::Halt {
             return Ok(());
