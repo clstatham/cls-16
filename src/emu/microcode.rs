@@ -76,6 +76,8 @@ pub enum MicroOp {
     Printi(Register),
     /// See [`Opcode::Printc`][crate::plat::Opcode::Printc].
     Printc(Register),
+    /// Pauses the emulator and breaks to the debugger.
+    Breakpoint,
 }
 
 impl<'a> Instruction<'a> {
@@ -89,6 +91,7 @@ impl<'a> Instruction<'a> {
         let mut mc = match (self.op, self.format) {
             (Opcode::Nop, InstrFormat::OpOnly) => vec![MicroOp::Nop],
             (Opcode::Halt, InstrFormat::OpOnly) => vec![MicroOp::Halt],
+            (Opcode::B, InstrFormat::OpOnly) => vec![MicroOp::Breakpoint],
             (Opcode::Mov, InstrFormat::RR(dest, src)) => vec![
                 MicroOp::SetRegReg(dest, src),
                 MicroOp::WriteReg(dest),

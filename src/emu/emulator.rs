@@ -10,6 +10,7 @@ use crate::plat::Instruction;
 
 use super::{
     alu::{Alu, AluMode},
+    debugger::Debugger,
     microcode::MicroOp,
     ram::Ram,
     registers::{EmuRegisters, Fl},
@@ -22,8 +23,10 @@ pub enum EmuState {
     Continue,
     /// The emulator is allowed to run, and the PC register will NOT be incrememeted on the next end-of-instruction encountered. Used for jumps.
     ///
-    /// Note: This automatically switches to [Continue][EmuState::Continue] after the current instruction finishes.
+    /// Note: This automatically switches to [`Continue`][EmuState::Continue] after the current instruction finishes.
     ContinueDontUpdatePc,
+    /// Stops execution, but doens't put the emulator in a hard, unrecoverable [`Halt`][EmuState::Halt] state.
+    Pause,
     /// Halt execution.
     Halt,
 }
@@ -33,7 +36,8 @@ pub struct Emulator<'a> {
     pub registers: EmuRegisters,
     pub alu: Alu,
     pub ram: Ram,
-    state: EmuState,
+    pub state: EmuState,
+    pub instr_history: VecDeque<Instruction<'a>>,
     program_memory: &'a [u8],
     micro_op_cache: VecDeque<MicroOp>,
     clock: Interval,
@@ -54,6 +58,7 @@ impl<'a> Emulator<'a> {
         let clock = rt.block_on(async { interval(Duration::from_secs_f64(clock_rate_hz.recip())) });
         let this = Self {
             program_memory: program,
+            instr_history: VecDeque::new(),
             registers: EmuRegisters::default(),
             alu: Alu::new(),
             ram: Ram::new(),
@@ -66,15 +71,36 @@ impl<'a> Emulator<'a> {
     }
 
     /// Runs the emulator, stepping through instructions until it reaches a halt state.
-    pub fn run_until_halt(&mut self) -> Result<()> {
-        while self.state != EmuState::Halt {
-            self.step()?;
+    pub fn run_while_continue(&mut self) -> Result<()> {
+        loop {
+            match self.state {
+                EmuState::Continue | EmuState::ContinueDontUpdatePc => {}
+                EmuState::Halt => break,
+                EmuState::Pause => {
+                    self.debug()?;
+                    continue;
+                }
+            }
+            self.microstep()?;
+        }
+        Ok(())
+    }
+
+    pub fn cont(&mut self) -> Result<()> {
+        self.state = EmuState::Continue;
+        self.run_while_continue()
+    }
+
+    pub fn step_instr(&mut self) -> Result<()> {
+        let initial_pc = self.registers.pc.value;
+        while self.registers.pc.value == initial_pc {
+            self.microstep()?;
         }
         Ok(())
     }
 
     /// Steps a single CPU clock cycle.
-    pub fn step(&mut self) -> Result<()> {
+    pub fn microstep(&mut self) -> Result<()> {
         if self.state == EmuState::Halt {
             return Ok(());
         }
@@ -105,6 +131,11 @@ impl<'a> Emulator<'a> {
                 match op {
                     MicroOp::Halt => {
                         self.state = EmuState::Halt;
+                        return Ok(());
+                    }
+                    MicroOp::Breakpoint => {
+                        println!("Breaking");
+                        self.state = EmuState::Pause;
                         return Ok(());
                     }
                     MicroOp::Nop => {}
@@ -208,10 +239,15 @@ impl<'a> Emulator<'a> {
                     current_instr[2],
                     current_instr[3],
                 ])?;
-                log::debug!(">>> {:?}", current_instr);
+                self.instr_history.push_back(current_instr);
+                log::debug!(">>> {}", current_instr);
                 self.micro_op_cache = current_instr.to_microcode()?.into();
             }
             Ok::<(), anyhow::Error>(())
         })
+    }
+
+    pub fn debug(&mut self) -> Result<()> {
+        Debugger::new(self).repl()
     }
 }

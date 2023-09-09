@@ -47,7 +47,7 @@ impl<'a, 'b> Instruction<'a> {
             match op {
                 Mnemonic::Regular(op) => match op {
                     // OpOnly instructions
-                    Opcode::Halt | Opcode::Nop => {
+                    Opcode::Halt | Opcode::Nop | Opcode::B => {
                         out.push(Instruction {
                             op,
                             format: InstrFormat::OpOnly,

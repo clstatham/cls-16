@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 pub mod alu;
+pub mod debugger;
 pub mod emulator;
 pub mod microcode;
 pub mod ram;

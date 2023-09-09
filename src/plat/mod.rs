@@ -1,5 +1,7 @@
 //! Common platform code between CLS-16's other modules.
 
+use std::fmt::Display;
+
 use anyhow::{Error, Result};
 use thiserror::Error;
 
@@ -64,6 +66,13 @@ impl TryFrom<u8> for Register {
             v if v == Self::FL as u8 => Ok(Self::FL),
             _ => Err(PlatformError::InvalidOpcode),
         }
+    }
+}
+
+impl Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // this is lazy, but it works for now
+        write!(f, "{}", format!("{:?}", self).to_lowercase())
     }
 }
 
@@ -147,6 +156,8 @@ pub enum Opcode {
     Printi,
     /// Interprets the value in `regA.LO` as an ASCII character and prints it to the debug monitor of the emulator.
     Printc,
+    /// Sets a debugging breakpoint.
+    B,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -173,9 +184,17 @@ impl TryFrom<u8> for Opcode {
             v if v == Self::Jz as u8 => Ok(Self::Jz),
             v if v == Self::Printi as u8 => Ok(Self::Printi),
             v if v == Self::Printc as u8 => Ok(Self::Printc),
+            v if v == Self::B as u8 => Ok(Self::B),
 
             _ => Err(PlatformError::InvalidOpcode),
         }
+    }
+}
+
+impl Display for Opcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // this is lazy, but it works for now
+        write!(f, "{}", format!("{:?}", self).to_lowercase())
     }
 }
 
@@ -192,6 +211,15 @@ impl<'a> Immediate<'a> {
             Some(val)
         } else {
             None
+        }
+    }
+}
+
+impl<'a> Display for Immediate<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Linked(val) => write!(f, "$0x{val:x}"),
+            Self::Unlinked(name) => write!(f, "%{name}"),
         }
     }
 }
@@ -231,6 +259,19 @@ impl<'a> InstrFormat<'a> {
     }
 }
 
+impl<'a> Display for InstrFormat<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RRI(a, b, imm) => write!(f, "{a} {b} {imm}"),
+            Self::RI(a, imm) => write!(f, "{a} {imm}"),
+            Self::RR(a, b) => write!(f, "{a} {b}"),
+            Self::R(a) => write!(f, "{a}"),
+            Self::I(imm) => write!(f, "{imm}"),
+            Self::OpOnly => Ok(()),
+        }
+    }
+}
+
 /// A full 32-bit instruction word in CLS-16.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Instruction<'a> {
@@ -263,6 +304,7 @@ impl<'a> Instruction<'a> {
         match self.op {
             Opcode::Halt => assert_format!(InstrFormat::OpOnly),
             Opcode::Nop => assert_format!(InstrFormat::OpOnly),
+            Opcode::B => assert_format!(InstrFormat::OpOnly),
 
             Opcode::Mov => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::Add => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
@@ -374,5 +416,11 @@ impl<'a> Instruction<'a> {
         let this = Self { op, format };
         this.validate()?;
         Ok(this)
+    }
+}
+
+impl<'a> Display for Instruction<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.op, self.format)
     }
 }

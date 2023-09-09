@@ -75,6 +75,12 @@ impl GpReg {
             self.output_bus_lo.send_replace(lo);
         }
     }
+
+    pub fn value(&self) -> u16 {
+        let lo = *self.output_bus_lo.subscribe().borrow();
+        let hi = *self.output_bus_hi.subscribe().borrow();
+        u16::from_le_bytes([lo, hi])
+    }
 }
 
 impl Default for GpReg {

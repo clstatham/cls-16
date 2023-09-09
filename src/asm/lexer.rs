@@ -29,6 +29,7 @@ impl Opcode {
             alt((
                 value(Self::Halt, tag_no_case("halt")),
                 value(Self::Nop, tag_no_case("nop")),
+                value(Self::B, tag_no_case("b")),
             )),
             alt((
                 value(Self::Add, tag_no_case("add")),

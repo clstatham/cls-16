@@ -19,6 +19,6 @@ fn main() -> Result<()> {
     let mut asm = Assembler::default();
     let bin = asm.assemble(program)?;
     let mut emu = Emulator::new(&bin, 24000.0)?;
-    emu.run_until_halt()?;
+    emu.run_while_continue()?;
     Ok(())
 }
