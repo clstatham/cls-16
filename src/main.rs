@@ -15,10 +15,10 @@ fn main() -> Result<()> {
     #[cfg(debug_assertions)]
     log::set_max_level(log::LevelFilter::Trace);
 
-    let program = include_str!("../examples/test1.s");
+    let program = include_str!("../test.s");
     let mut asm = Assembler::default();
     let bin = asm.assemble(program)?;
-    let mut emu = Emulator::new(&bin, 2000.0)?;
+    let mut emu = Emulator::new(&bin, 24000.0)?;
     emu.run_until_halt()?;
     Ok(())
 }

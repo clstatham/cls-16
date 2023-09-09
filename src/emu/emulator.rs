@@ -114,11 +114,11 @@ impl<'a> Emulator<'a> {
                     MicroOp::WriteReg(reg) => self.registers.write(reg)?,
                     MicroOp::NoWriteReg(reg) => self.registers.no_write(reg)?,
                     MicroOp::SetRegLoopback(reg) => self.registers.loopback(reg)?,
-                    MicroOp::SetRegImmediate(reg) => {
+                    MicroOp::SetRegReg(dest, src) => {
                         self.registers
-                            .route_input_hi(reg, self.registers.ih.output_bus_hi.subscribe())?;
+                            .route_input_hi(dest, self.registers.subscribe_hi(src))?;
                         self.registers
-                            .route_input_lo(reg, self.registers.ih.output_bus_lo.subscribe())?;
+                            .route_input_lo(dest, self.registers.subscribe_lo(src))?;
                     }
                     MicroOp::SetAluLeft(reg) => {
                         self.alu.route_left_hi(self.registers.subscribe_hi(reg));
