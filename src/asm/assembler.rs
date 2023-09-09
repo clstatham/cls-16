@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Error, Result};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -11,6 +13,7 @@ use super::{AsmError, Compound, Token, WithSpan};
 /// A basic block of code in an assembly listing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Label<'a> {
+    pub order: usize,
     pub name: &'a str,
     pub link_status: Immediate<'a>,
     pub instructions: Vec<Instruction<'a>>,
@@ -26,7 +29,8 @@ impl<'a, 'b> Instruction<'a> {
     #[allow(clippy::type_complexity)]
     pub(crate) fn from_tokens(
         mut toks: &'b [WithSpan<'a, Token<'a>>],
-        known_labels: FxHashMap<&'a str, Label<'a>>,
+        label_names: FxHashMap<&'a str, usize>,
+        known_labels: BTreeMap<usize, Label<'a>>,
     ) -> Result<(
         &'b [WithSpan<'a, Token<'a>>],
         Option<Vec<Self>>,
@@ -69,7 +73,9 @@ impl<'a, 'b> Instruction<'a> {
                                     format: InstrFormat::RI(a, Immediate::Linked(imm)),
                                 }),
                                 Token::Label(name) => {
-                                    if let Some(label) = known_labels.get(name) {
+                                    if let Some(label) =
+                                        label_names.get(name).and_then(|l| known_labels.get(l))
+                                    {
                                         out.push(Instruction {
                                             op,
                                             format: InstrFormat::RI(a, label.link_status),
@@ -143,7 +149,9 @@ impl<'a, 'b> Instruction<'a> {
                                 format: InstrFormat::I(Immediate::Linked(imm)),
                             });
                         } else if let Token::Label(name) = a.item {
-                            if let Some(label) = known_labels.get(name) {
+                            if let Some(label) =
+                                label_names.get(name).and_then(|l| known_labels.get(l))
+                            {
                                 out.push(Instruction {
                                     op,
                                     format: InstrFormat::I(label.link_status),
@@ -241,7 +249,8 @@ impl Assembler {
     ///
     /// This function will return an error if the provided assembly source is not valid syntax, or if there is an error while linking.
     pub fn assemble(&mut self, program_text: &str) -> Result<Box<[u8]>> {
-        let mut labels = FxHashMap::default();
+        let mut labels = BTreeMap::new();
+        let mut label_names = FxHashMap::default();
         let mut undefined_references = FxHashSet::default();
 
         let prog_span = Span::new_extra(program_text, program_text);
@@ -256,6 +265,7 @@ impl Assembler {
                 Token::Label(name) => {
                     undefined_references.remove(name);
                     let mut lab = Label {
+                        order: labels.len(),
                         name,
                         link_status: Immediate::Unlinked(name),
                         instructions: vec![],
@@ -263,10 +273,10 @@ impl Assembler {
 
                     loop {
                         let (rest, maybe_instrs, mut discovered_labels) =
-                            Instruction::from_tokens(tokens, labels.clone())?;
+                            Instruction::from_tokens(tokens, label_names.clone(), labels.clone())?;
 
                         for discovered_name in discovered_labels.drain() {
-                            if !labels.contains_key(discovered_name) {
+                            if !label_names.contains_key(discovered_name) {
                                 undefined_references.insert(discovered_name.to_owned());
                             }
                         }
@@ -277,11 +287,12 @@ impl Assembler {
                             break;
                         }
                     }
-                    let old = labels.insert(name, lab);
-                    if let Some(old) = old {
+                    let old = label_names.insert(lab.name, lab.order);
+                    labels.insert(lab.order, lab);
+                    if old.is_some() {
                         return Err(Error::from(AsmError::DuplicateLabel(
                             next_tok.span.location_line() as usize,
-                            old.name.to_owned(),
+                            name.to_owned(),
                         )));
                     }
                 }
@@ -328,25 +339,28 @@ impl Assembler {
             };
 
         // codegen the "start" label first
-        let mut start_label =
-            labels
-                .remove("start")
-                .ok_or(Error::from(AsmError::UndefinedReferences(vec![
-                    "start".to_owned()
-                ])))?;
+        let mut start_label = label_names
+            .get("start")
+            .and_then(|l| labels.remove(l))
+            .ok_or(Error::from(AsmError::UndefinedReferences(vec![
+                "start".to_owned()
+            ])))?;
         codegen_label(&mut start_label, &mut undefined_locations)?;
 
         for (_label_name, label) in labels.iter_mut() {
             codegen_label(label, &mut undefined_locations)?;
         }
         // reinsert for linking
-        labels.insert("start", start_label);
+        labels.insert(*label_names.get("start").unwrap(), start_label);
 
         let mut iters = 0;
         loop {
             let undefined_locations_clone = undefined_locations.clone();
             for (loc, undefined) in undefined_locations_clone.iter() {
-                if let Some(lab) = labels.get(undefined.as_str()) {
+                if let Some(lab) = label_names
+                    .get(undefined.as_str())
+                    .and_then(|l| labels.get(l))
+                {
                     if let Immediate::Linked(linked_loc) = lab.link_status {
                         out[*loc as usize + 2..*loc as usize + 4]
                             .copy_from_slice(&linked_loc.to_le_bytes());
