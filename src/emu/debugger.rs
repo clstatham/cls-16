@@ -82,7 +82,6 @@ impl<'b, 'a> Debugger<'b, 'a> {
                         print_specialreg!(il);
                         print_specialreg!(ih);
                         print_specialreg!(fl);
-                        // print_gpreg!(emu.registers.r1);
                         Ok(CommandStatus::Done)
                     }
                 },
@@ -100,7 +99,6 @@ impl<'b, 'a> Debugger<'b, 'a> {
             .build()?;
         eprintln!("CLS-16 Debug REPL");
         'repl: loop {
-            // eprintln!("{}", self.emu.borrow())
             eprintln!();
             {
                 let emu = self.emu.borrow();

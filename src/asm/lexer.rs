@@ -12,7 +12,7 @@ use anyhow::{Error, Result};
 
 use crate::plat::{Opcode, Register};
 
-use super::{AsmError, Compound, Mnemonic, Span, Token, WithSpan};
+use super::{AsmError, AsmToken, Compound, Mnemonic, Span, WithSpan};
 
 impl Compound {
     pub fn lex(inp: Span) -> IResult<Span, Self> {
@@ -114,7 +114,7 @@ pub fn lex_comment_or_whitespace(inp: Span) -> IResult<Span, Span> {
     alt((multispace1, lex_comment))(inp)
 }
 
-impl<'a> Token<'a> {
+impl<'a> AsmToken<'a> {
     pub fn lex(inp: Span<'a>) -> IResult<Span, WithSpan<Self>> {
         alt((
             map(Mnemonic::lex, |t| WithSpan {
@@ -138,11 +138,11 @@ impl<'a> Token<'a> {
 }
 
 /// Lexes assembly program text into a [Vec] of [Token]s.
-pub fn lex_program(program: &str) -> Result<Vec<WithSpan<Token<'_>>>> {
+pub fn lex_program(program: &str) -> Result<Vec<WithSpan<AsmToken<'_>>>> {
     let span = Span::new_extra(program, program);
     let (garbage, mut toks) = many0(delimited(
         many0(lex_comment_or_whitespace),
-        Token::lex,
+        AsmToken::lex,
         many0(lex_comment_or_whitespace),
     ))(span)
     .map_err(|e| {
@@ -158,7 +158,7 @@ pub fn lex_program(program: &str) -> Result<Vec<WithSpan<Token<'_>>>> {
     })?;
     toks.push(WithSpan {
         span: garbage,
-        item: Token::Eof,
+        item: AsmToken::Eof,
     });
     if !garbage.is_empty() {
         Err(AsmError::FoundGarbage {

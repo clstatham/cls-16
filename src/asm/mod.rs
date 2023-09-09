@@ -39,7 +39,7 @@ pub enum AsmError {
 
 /// An assembly language token. Output for the lexer, input for the parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Token<'a> {
+pub enum AsmToken<'a> {
     /// A [Mnemonic].
     Mnemonic(Mnemonic),
     /// A label marking a location (address) in the code.

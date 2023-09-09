@@ -8,7 +8,7 @@ use crate::{
     plat::{Immediate, InstrFormat, Instruction, Opcode, Register},
 };
 
-use super::{AsmError, Compound, Token, WithSpan};
+use super::{AsmError, AsmToken, Compound, WithSpan};
 
 /// A basic block of code in an assembly listing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -28,11 +28,11 @@ impl<'a> Label<'a> {
 impl<'a, 'b> Instruction<'a> {
     #[allow(clippy::type_complexity)]
     pub(crate) fn from_tokens(
-        mut toks: &'b [WithSpan<'a, Token<'a>>],
+        mut toks: &'b [WithSpan<'a, AsmToken<'a>>],
         label_names: FxHashMap<&'a str, usize>,
         known_labels: BTreeMap<usize, Label<'a>>,
     ) -> Result<(
-        &'b [WithSpan<'a, Token<'a>>],
+        &'b [WithSpan<'a, AsmToken<'a>>],
         Option<Vec<Self>>,
         FxHashSet<&'a str>,
     )> {
@@ -43,7 +43,7 @@ impl<'a, 'b> Instruction<'a> {
             toks = &toks[1..];
             t
         };
-        if let Token::Mnemonic(op) = take1().item {
+        if let AsmToken::Mnemonic(op) = take1().item {
             match op {
                 Mnemonic::Regular(op) => match op {
                     // OpOnly instructions
@@ -61,18 +61,18 @@ impl<'a, 'b> Instruction<'a> {
                     | Opcode::Sub
                     | Opcode::Xor => {
                         let a = take1();
-                        if let Token::Register(a) = a.item {
+                        if let AsmToken::Register(a) = a.item {
                             let b = take1();
                             match b.item {
-                                Token::Register(b) => out.push(Instruction {
+                                AsmToken::Register(b) => out.push(Instruction {
                                     op,
                                     format: InstrFormat::RR(a, b),
                                 }),
-                                Token::Immediate(imm) => out.push(Instruction {
+                                AsmToken::Immediate(imm) => out.push(Instruction {
                                     op,
                                     format: InstrFormat::RI(a, Immediate::Linked(imm)),
                                 }),
-                                Token::Label(name) => {
+                                AsmToken::Label(name) => {
                                     if let Some(label) =
                                         label_names.get(name).and_then(|l| known_labels.get(l))
                                     {
@@ -104,8 +104,8 @@ impl<'a, 'b> Instruction<'a> {
                     Opcode::Ldh | Opcode::Ldl | Opcode::Sth | Opcode::Stl => {
                         let a = take1();
                         let b = take1();
-                        if let Token::Register(a) = a.item {
-                            if let Token::Register(b) = b.item {
+                        if let AsmToken::Register(a) = a.item {
+                            if let AsmToken::Register(b) = b.item {
                                 out.push(Instruction {
                                     op,
                                     format: InstrFormat::RR(a, b),
@@ -124,7 +124,7 @@ impl<'a, 'b> Instruction<'a> {
                     // R instructions
                     Opcode::Not | Opcode::Shl | Opcode::Shr => {
                         let a = take1();
-                        if let Token::Register(a) = a.item {
+                        if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::R(a),
@@ -138,17 +138,17 @@ impl<'a, 'b> Instruction<'a> {
                     // R | I instructions
                     Opcode::Jmp | Opcode::Jz | Opcode::Printc | Opcode::Printi => {
                         let a = take1();
-                        if let Token::Register(a) = a.item {
+                        if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::R(a),
                             });
-                        } else if let Token::Immediate(imm) = a.item {
+                        } else if let AsmToken::Immediate(imm) = a.item {
                             out.push(Instruction {
                                 op,
                                 format: InstrFormat::I(Immediate::Linked(imm)),
                             });
-                        } else if let Token::Label(name) = a.item {
+                        } else if let AsmToken::Label(name) = a.item {
                             if let Some(label) =
                                 label_names.get(name).and_then(|l| known_labels.get(l))
                             {
@@ -177,7 +177,7 @@ impl<'a, 'b> Instruction<'a> {
                         // sth     sp regA
                         // sub     sp $1
                         let a = take1();
-                        if let Token::Register(a) = a.item {
+                        if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op: Opcode::Stl,
                                 format: InstrFormat::RR(Register::SP, a),
@@ -206,7 +206,7 @@ impl<'a, 'b> Instruction<'a> {
                         // add     sp $1
                         // ldl     regA sp
                         let a = take1();
-                        if let Token::Register(a) = a.item {
+                        if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op: Opcode::Add,
                                 format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
@@ -261,8 +261,8 @@ impl Assembler {
         while let Some(next_tok) = tokens.first() {
             tokens = &tokens[1..];
             match next_tok.item {
-                Token::Eof => break,
-                Token::Label(name) => {
+                AsmToken::Eof => break,
+                AsmToken::Label(name) => {
                     undefined_references.remove(name);
                     let mut lab = Label {
                         order: labels.len(),
