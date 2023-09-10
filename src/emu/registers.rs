@@ -154,6 +154,7 @@ pub struct EmuRegisters {
     pub r4: GpReg,
     pub r5: GpReg,
     pub r6: GpReg,
+    pub rx: GpReg,
     pub sp: GpReg,
     pub fp: GpReg,
     pub pc: SpecialReg,
@@ -171,9 +172,10 @@ impl EmuRegisters {
             Register::R4 => self.r4.write(),
             Register::R5 => self.r5.write(),
             Register::R6 => self.r6.write(),
+            Register::RX => self.rx.write(),
             Register::SP => self.sp.write(),
             Register::FP => self.fp.write(),
-            _ => return Err(Error::from(EmuError::InvalidRegister)),
+            _ => return Err(Error::from(EmuError::InvalidRegister(reg))),
         }
         Ok(())
     }
@@ -186,9 +188,10 @@ impl EmuRegisters {
             Register::R4 => self.r4.no_write(),
             Register::R5 => self.r5.no_write(),
             Register::R6 => self.r6.no_write(),
+            Register::RX => self.rx.no_write(),
             Register::SP => self.sp.no_write(),
             Register::FP => self.fp.no_write(),
-            _ => return Err(Error::from(EmuError::InvalidRegister)),
+            _ => return Err(Error::from(EmuError::InvalidRegister(reg))),
         }
         Ok(())
     }
@@ -201,9 +204,10 @@ impl EmuRegisters {
             Register::R4 => self.r4.loopback(),
             Register::R5 => self.r5.loopback(),
             Register::R6 => self.r6.loopback(),
+            Register::RX => self.rx.loopback(),
             Register::SP => self.sp.loopback(),
             Register::FP => self.fp.loopback(),
-            _ => return Err(Error::from(EmuError::InvalidRegister)),
+            _ => return Err(Error::from(EmuError::InvalidRegister(reg))),
         }
         Ok(())
     }
@@ -216,9 +220,10 @@ impl EmuRegisters {
             Register::R4 => self.r4.route_input_hi(output_bus),
             Register::R5 => self.r5.route_input_hi(output_bus),
             Register::R6 => self.r6.route_input_hi(output_bus),
+            Register::RX => self.rx.route_input_hi(output_bus),
             Register::SP => self.sp.route_input_hi(output_bus),
             Register::FP => self.fp.route_input_hi(output_bus),
-            _ => return Err(Error::from(EmuError::InvalidRegister)),
+            _ => return Err(Error::from(EmuError::InvalidRegister(reg))),
         }
         Ok(())
     }
@@ -231,9 +236,10 @@ impl EmuRegisters {
             Register::R4 => self.r4.route_input_lo(output_bus),
             Register::R5 => self.r5.route_input_lo(output_bus),
             Register::R6 => self.r6.route_input_lo(output_bus),
+            Register::RX => self.rx.route_input_lo(output_bus),
             Register::SP => self.sp.route_input_lo(output_bus),
             Register::FP => self.fp.route_input_lo(output_bus),
-            _ => return Err(Error::from(EmuError::InvalidRegister)),
+            _ => return Err(Error::from(EmuError::InvalidRegister(reg))),
         }
         Ok(())
     }
@@ -247,6 +253,7 @@ impl EmuRegisters {
             Register::R4 => self.r4.output_bus_hi.subscribe(),
             Register::R5 => self.r5.output_bus_hi.subscribe(),
             Register::R6 => self.r6.output_bus_hi.subscribe(),
+            Register::RX => self.rx.output_bus_hi.subscribe(),
             Register::SP => self.sp.output_bus_hi.subscribe(),
             Register::FP => self.fp.output_bus_hi.subscribe(),
             Register::PC => self.pc.output_bus_hi.subscribe(),
@@ -265,6 +272,7 @@ impl EmuRegisters {
             Register::R4 => self.r4.output_bus_lo.subscribe(),
             Register::R5 => self.r5.output_bus_lo.subscribe(),
             Register::R6 => self.r6.output_bus_lo.subscribe(),
+            Register::RX => self.rx.output_bus_lo.subscribe(),
             Register::SP => self.sp.output_bus_lo.subscribe(),
             Register::FP => self.fp.output_bus_lo.subscribe(),
             Register::PC => self.pc.output_bus_lo.subscribe(),

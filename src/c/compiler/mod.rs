@@ -58,7 +58,7 @@ impl FunctionContext {
         let ssa = Ssa::new(
             typ,
             name,
-            ssa::Storage::RegOffset(self.stack_offset, Register::FP),
+            ssa::Storage::AddrOffset(self.stack_offset, Register::FP),
         );
         self.pool.insert(name.to_owned(), ssa.clone());
         ssa
@@ -75,61 +75,27 @@ impl FunctionContext {
 
 #[inline]
 #[doc(hidden)]
-fn store_reg_to_reg_offset_via_r6(
-    dest: Register,
-    dest_offset: u16,
-    src: Register,
-    block: &mut Block,
-) {
-    block.sequence.push(Instruction {
-        op: Opcode::Mov,
-        format: InstrFormat::RR(Register::R6, dest),
-    });
-    block.sequence.push(Instruction {
-        op: Opcode::Add,
-        format: InstrFormat::RI(Register::R6, Immediate::Linked(dest_offset)),
-    });
+fn store_reg_to_reg_offset(addr: Register, addr_offset: u16, src: Register, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Stl,
-        format: InstrFormat::RR(Register::R6, src),
-    });
-    block.sequence.push(Instruction {
-        op: Opcode::Add,
-        format: InstrFormat::RI(Register::R6, Immediate::Linked(1)),
+        format: InstrFormat::RRI(addr, src, Immediate::Linked(addr_offset)),
     });
     block.sequence.push(Instruction {
         op: Opcode::Sth,
-        format: InstrFormat::RR(Register::R6, src),
+        format: InstrFormat::RRI(addr, src, Immediate::Linked(addr_offset + 1)),
     });
 }
 
 #[inline]
 #[doc(hidden)]
-fn load_reg_offset_to_reg_via_r6(
-    dest: Register,
-    src: Register,
-    src_offset: u16,
-    block: &mut Block,
-) {
-    block.sequence.push(Instruction {
-        op: Opcode::Mov,
-        format: InstrFormat::RR(Register::R6, src),
-    });
-    block.sequence.push(Instruction {
-        op: Opcode::Add,
-        format: InstrFormat::RI(Register::R6, Immediate::Linked(src_offset)),
-    });
+fn load_reg_offset_to_reg(dest: Register, addr: Register, addr_offset: u16, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Ldl,
-        format: InstrFormat::RR(dest, Register::R6),
-    });
-    block.sequence.push(Instruction {
-        op: Opcode::Add,
-        format: InstrFormat::RI(Register::R6, Immediate::Linked(1)),
+        format: InstrFormat::RRI(dest, addr, Immediate::Linked(addr_offset)),
     });
     block.sequence.push(Instruction {
         op: Opcode::Ldh,
-        format: InstrFormat::RR(dest, Register::R6),
+        format: InstrFormat::RRI(dest, addr, Immediate::Linked(addr_offset + 1)),
     });
 }
 
@@ -150,7 +116,7 @@ impl CompilerState {
         Ok(())
     }
 
-    /// Clobbers R4, R5, R6.
+    /// Clobbers R4, R5.
     fn compile_expr(&mut self, expr: &Expr<'_>, dest: Option<&Ssa>, func_name: &str) -> Result<()> {
         match expr {
             Expr::Ident(id) => {
@@ -159,17 +125,22 @@ impl CompilerState {
                     let src = func.get(id.item.0).unwrap();
                     let block = func.last_block_mut().unwrap();
                     match (dest.storage(), src.storage()) {
-                        (Storage::RegOffset(dest_off, dest), Storage::RegOffset(src_off, src)) => {
+                        (
+                            Storage::AddrOffset(dest_off, dest),
+                            Storage::AddrOffset(src_off, src),
+                        ) => {
                             let tmp_reg = Register::R5;
-                            load_reg_offset_to_reg_via_r6(tmp_reg, *src, *src_off, block);
-                            store_reg_to_reg_offset_via_r6(*dest, *dest_off, tmp_reg, block);
+                            load_reg_offset_to_reg(tmp_reg, *src, *src_off, block);
+                            store_reg_to_reg_offset(*dest, *dest_off, tmp_reg, block);
                         }
-                        (Storage::Register(dest), Storage::RegOffset(src_off, src)) => {
-                            load_reg_offset_to_reg_via_r6(*dest, *src, *src_off, block);
+                        (Storage::Register(dest), Storage::AddrOffset(src_off, src)) => {
+                            load_reg_offset_to_reg(*dest, *src, *src_off, block);
                         }
 
                         st => todo!("{:?}", st),
                     }
+                } else {
+                    todo!()
                 }
             }
             Expr::Constant(val) => {
@@ -183,13 +154,13 @@ impl CompilerState {
                             op: Opcode::Mov,
                             format: InstrFormat::RI(*reg, Immediate::Linked(val)),
                         }),
-                        ssa::Storage::RegOffset(off, reg) => {
+                        ssa::Storage::AddrOffset(addr_offset, addr) => {
                             let tmp_reg = Register::R5;
                             block.sequence.push(Instruction {
                                 op: Opcode::Mov,
                                 format: InstrFormat::RI(tmp_reg, Immediate::Linked(val)),
                             });
-                            store_reg_to_reg_offset_via_r6(*reg, *off, tmp_reg, block);
+                            store_reg_to_reg_offset(*addr, *addr_offset, tmp_reg, block);
                         }
                     }
                 } else {
@@ -240,18 +211,18 @@ impl CompilerState {
                             let (rhs_offset, rhs_reg) = rhs.get_reg_offset().unwrap();
                             // dest might be R5, so use R4
                             let tmp_rhs = Register::R4;
-                            load_reg_offset_to_reg_via_r6(tmp_rhs, rhs_reg, rhs_offset, block);
+                            load_reg_offset_to_reg(tmp_rhs, rhs_reg, rhs_offset, block);
                             match dest.storage() {
                                 Storage::Register(dest_reg) => {
                                     block.sequence.push(Instruction {
                                         op,
-                                        format: InstrFormat::RR(*dest_reg, tmp_rhs),
+                                        format: InstrFormat::RRR(*dest_reg, *dest_reg, tmp_rhs),
                                     });
                                 }
-                                Storage::RegOffset(dest_offset, dest_addr) => {
+                                Storage::AddrOffset(dest_offset, dest_addr) => {
                                     // we know it's not R5, so this should be safe
                                     let tmp_dest = Register::R5;
-                                    load_reg_offset_to_reg_via_r6(
+                                    load_reg_offset_to_reg(
                                         tmp_dest,
                                         *dest_addr,
                                         *dest_offset,
@@ -259,9 +230,9 @@ impl CompilerState {
                                     );
                                     block.sequence.push(Instruction {
                                         op,
-                                        format: InstrFormat::RR(tmp_dest, tmp_rhs),
+                                        format: InstrFormat::RRR(tmp_dest, tmp_dest, tmp_rhs),
                                     });
-                                    store_reg_to_reg_offset_via_r6(
+                                    store_reg_to_reg_offset(
                                         *dest_addr,
                                         *dest_offset,
                                         tmp_dest,
@@ -420,7 +391,7 @@ impl CompilerState {
             }
             lines.push("    push fp".to_owned());
             lines.push("    mov fp sp".to_owned());
-            lines.push(format!("    sub sp ${}", func.stack_offset));
+            lines.push(format!("    sub sp sp ${}", func.stack_offset));
 
             for block in func.code.iter() {
                 lines.push(format!("%{}", block.label));

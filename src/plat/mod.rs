@@ -10,8 +10,8 @@ use thiserror::Error;
 pub enum PlatformError {
     #[error("invalid opcode")]
     InvalidOpcode,
-    #[error("invalid instruction")]
-    InvalidInstruction,
+    #[error("invalid instruction: {0}")]
+    InvalidInstruction(String),
     #[error("undefined reference to {0}")]
     UndefinedReference(String),
 }
@@ -20,6 +20,7 @@ pub enum PlatformError {
 ///
 /// `R1` - `R6`, `SP`, and `FP` are general purpose registers.
 /// `R0` is special, as it is always zero.
+/// `RX` is special, as it is allowed to be clobbered by other instructions.
 /// `PC`, `IH`, `IL`, and `FL` are VERY special as they are able to be directly manipulated by the emulator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -32,6 +33,8 @@ pub enum Register {
     R4,
     R5,
     R6,
+    /// Scratch register.
+    RX,
     /// Stack pointer.
     SP,
     /// Frame pointer.
@@ -58,6 +61,7 @@ impl TryFrom<u8> for Register {
             v if v == Self::R4 as u8 => Ok(Self::R4),
             v if v == Self::R5 as u8 => Ok(Self::R5),
             v if v == Self::R6 as u8 => Ok(Self::R6),
+            v if v == Self::RX as u8 => Ok(Self::RX),
             v if v == Self::SP as u8 => Ok(Self::SP),
             v if v == Self::FP as u8 => Ok(Self::FP),
             v if v == Self::PC as u8 => Ok(Self::PC),
@@ -107,25 +111,25 @@ pub enum Opcode {
     Mov,
     /* ALU */
     /// `regA <- regB + regC`
-    /// `regA <- regA + (immediate value)`
+    /// `regA <- regB + (immediate value)`
     Add,
     /// `regA <- regB - regC`
-    /// `regA <- regA - (immediate value)`
+    /// `regA <- regB - (immediate value)`
     Sub,
     /// `regA <- regB * regC`
-    /// `regA <- regA * (immediate value)`
+    /// `regA <- regB * (immediate value)`
     Mul,
     /// `regA <- regB / regC`
-    /// `regA <- regA / (immediate value)`
+    /// `regA <- regB / (immediate value)`
     Div,
     /// `regA <- regB & regC`
-    /// `regA <- regA & (immediate value)`
+    /// `regA <- regB & (immediate value)`
     And,
     /// `regA <- regB | regC`
-    /// `regA <- regA | (immediate value)`
+    /// `regA <- regB | (immediate value)`
     Or,
     /// `regA <- regB ^ regC`
-    /// `regA <- regA ^ (immediate value)`
+    /// `regA <- regB ^ (immediate value)`
     Xor,
     /// `regA <- ~regB`
     Not,
@@ -138,12 +142,16 @@ pub enum Opcode {
 
     /* Memory */
     /// `mem[regA] <- regB.LO`
+    /// `mem[regA + (immediate value)] <- regB.LO`
     Stl,
     /// `mem[regA] <- regB.HI`
+    /// `mem[regA + (immediate value)] <- regB.HI`
     Sth,
     /// `regA.LO <- mem[regB]`
+    /// `regA.LO <- mem[regB + (immediate value)]`
     Ldl,
     /// `regA.HI <- mem[regB]`
+    /// `regA.HI <- mem[regB + (immediate value)]`
     Ldh,
 
     /* Branching */
@@ -238,18 +246,20 @@ impl Display for Immediate {
 /// The following three are specified by one of this enum's variants.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstrFormat {
-    /// 000 Opcode, Register, Register, Immediate
-    RRI(Register, Register, Immediate),
-    /// 001 Opcode, Register, 0000, Immediate
-    RI(Register, Immediate),
-    /// 010 Opcode, Register, Register, 0000 0000 0000 0000
-    RR(Register, Register),
-    /// 011 Opcode, Register, 0000, 0000 0000 0000 0000
-    R(Register),
-    /// 100 Opcode, 0000, 0000, Immediate
-    I(Immediate),
-    /// 101 Opcode, 0000, 0000, 0000 0000 0000 0000
+    /// 000 Opcode, 0000, 0000, 0000 0000 0000 0000
     OpOnly,
+    /// 001 Opcode, Register, Register, 0000, Register, 0000 0000
+    RRR(Register, Register, Register),
+    /// 010 Opcode, Register, Register, Immediate
+    RRI(Register, Register, Immediate),
+    /// 011 Opcode, Register, 0000, Immediate
+    RI(Register, Immediate),
+    /// 100 Opcode, Register, Register, 0000 0000 0000 0000
+    RR(Register, Register),
+    /// 101 Opcode, Register, 0000, 0000 0000 0000 0000
+    R(Register),
+    /// 110 Opcode, 0000, 0000, Immediate
+    I(Immediate),
 }
 
 impl InstrFormat {
@@ -257,12 +267,13 @@ impl InstrFormat {
     #[rustfmt::skip]
     pub const fn encode(&self) -> u8 {
         match self {
-            Self::RRI(_, _, _) =>   0b00000000,
-            Self::RI(_, _) =>       0b00100000,
-            Self::RR(_, _) =>       0b01000000,
-            Self::R(_) =>           0b01100000,
-            Self::I(_) =>           0b10000000,
-            Self::OpOnly =>         0b10100000,
+            Self::OpOnly =>         0b000_00000,
+            Self::RRR(_, _, _) =>   0b001_00000,
+            Self::RRI(_, _, _) =>   0b010_00000,
+            Self::RI(_, _) =>       0b011_00000,
+            Self::RR(_, _) =>       0b100_00000,
+            Self::R(_) =>           0b101_00000,
+            Self::I(_) =>           0b110_00000,
         }
     }
 }
@@ -270,6 +281,7 @@ impl InstrFormat {
 impl Display for InstrFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::RRR(a, b, c) => write!(f, "{a} {b} {c}"),
             Self::RRI(a, b, imm) => write!(f, "{a} {b} {imm}"),
             Self::RI(a, imm) => write!(f, "{a} {imm}"),
             Self::RR(a, b) => write!(f, "{a} {b}"),
@@ -297,45 +309,42 @@ impl Instruction {
         if self.is_valid() {
             Ok(())
         } else {
-            Err(Error::from(PlatformError::InvalidInstruction))
+            Err(Error::from(PlatformError::InvalidInstruction(
+                self.to_string(),
+            )))
         }
     }
 
     /// Returns `true` if this instruction has a valid format for its opcode.
     pub const fn is_valid(&self) -> bool {
-        #[doc(hidden)]
-        macro_rules! assert_format {
-            ($fmt:pat) => {
-                matches!(self.format, $fmt)
-            };
-        }
         match self.op {
-            Opcode::Halt => assert_format!(InstrFormat::OpOnly),
-            Opcode::Nop => assert_format!(InstrFormat::OpOnly),
-            Opcode::B => assert_format!(InstrFormat::OpOnly),
+            Opcode::Halt | Opcode::Nop | Opcode::B => matches!(self.format, InstrFormat::OpOnly),
 
-            Opcode::Mov => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Add => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Sub => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Mul => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Div => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::And => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Or => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
-            Opcode::Xor => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
+            Opcode::Mov => matches!(self.format, InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
 
-            Opcode::Not => assert_format!(InstrFormat::R(_)),
-            Opcode::Shl => assert_format!(InstrFormat::R(_)),
-            Opcode::Shr => assert_format!(InstrFormat::R(_)),
+            Opcode::Add
+            | Opcode::Sub
+            | Opcode::Mul
+            | Opcode::Div
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor => matches!(
+                self.format,
+                InstrFormat::RRR(_, _, _) | InstrFormat::RRI(_, _, _)
+            ),
 
-            Opcode::Stl => assert_format!(InstrFormat::RR(_, _)),
-            Opcode::Sth => assert_format!(InstrFormat::RR(_, _)),
-            Opcode::Ldl => assert_format!(InstrFormat::RR(_, _)),
-            Opcode::Ldh => assert_format!(InstrFormat::RR(_, _)),
+            Opcode::Not | Opcode::Shl | Opcode::Shr => matches!(self.format, InstrFormat::R(_)),
 
-            Opcode::Jz => assert_format!(InstrFormat::R(_) | InstrFormat::I(_)),
-            Opcode::Jmp => assert_format!(InstrFormat::R(_) | InstrFormat::I(_)),
-            Opcode::Printi => assert_format!(InstrFormat::R(_) | InstrFormat::I(_)),
-            Opcode::Printc => assert_format!(InstrFormat::R(_) | InstrFormat::I(_)),
+            Opcode::Stl | Opcode::Sth | Opcode::Ldl | Opcode::Ldh => {
+                matches!(
+                    self.format,
+                    InstrFormat::RR(_, _) | InstrFormat::RRI(_, _, _)
+                )
+            }
+
+            Opcode::Jz | Opcode::Jmp | Opcode::Printi | Opcode::Printc => {
+                matches!(self.format, InstrFormat::R(_) | InstrFormat::I(_))
+            }
         }
     }
 
@@ -348,6 +357,7 @@ impl Instruction {
         self.validate()?;
         let op = self.op as u8 | self.format.encode();
         let format = match &self.format {
+            InstrFormat::RRR(a, b, c) => [(*a as u8) << 4 | (*b as u8), *c as u8, 0],
             InstrFormat::RRI(a, b, imm) => {
                 let imm = if let Immediate::Linked(imm) = imm {
                     *imm
@@ -390,36 +400,44 @@ impl Instruction {
     pub fn from_bytes(bytes: [u8; 4]) -> Result<Self> {
         let op: Opcode = (bytes[0] & 0b000_11111).try_into()?;
         let format = match bytes[0] & 0b111_00000 {
-            0b000_00000 => {
+            0b000_00000 => InstrFormat::OpOnly,
+            0b001_00000 => {
+                // RRR
+                let a: Register = ((bytes[1] & 0b1111_0000) >> 4).try_into()?;
+                let b: Register = (bytes[1] & 0b0000_1111).try_into()?;
+                let c: Register = (bytes[2] & 0b0000_1111).try_into()?;
+                InstrFormat::RRR(a, b, c)
+            }
+            0b010_00000 => {
                 // RRI
                 let a: Register = ((bytes[1] & 0b1111_0000) >> 4).try_into()?;
                 let b: Register = (bytes[1] & 0b0000_1111).try_into()?;
                 let imm = Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]]));
                 InstrFormat::RRI(a, b, imm)
             }
-            0b001_00000 => {
+            0b011_00000 => {
                 // RI
                 let a: Register = ((bytes[1] & 0b1111_0000) >> 4).try_into()?;
                 let imm = Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]]));
                 InstrFormat::RI(a, imm)
             }
-            0b010_00000 => {
+            0b100_00000 => {
                 // RR
                 let a: Register = ((bytes[1] & 0b1111_0000) >> 4).try_into()?;
                 let b: Register = (bytes[1] & 0b0000_1111).try_into()?;
                 InstrFormat::RR(a, b)
             }
-            0b011_00000 => {
+            0b101_00000 => {
                 // R
                 let a: Register = ((bytes[1] & 0b1111_0000) >> 4).try_into()?;
                 InstrFormat::R(a)
             }
-            0b100_00000 => {
+            0b110_00000 => {
                 // I
                 let imm = Immediate::Linked(u16::from_le_bytes([bytes[2], bytes[3]]));
                 InstrFormat::I(imm)
             }
-            0b101_00000 => InstrFormat::OpOnly,
+
             _ => return Err(Error::from(PlatformError::InvalidOpcode)),
         };
 

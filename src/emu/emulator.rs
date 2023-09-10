@@ -81,7 +81,11 @@ impl<'a> Emulator<'a> {
                     continue;
                 }
             }
-            self.microstep()?;
+            if let Err(e) = self.microstep() {
+                eprintln!("Error caught, breaking to debug.");
+                eprintln!("{}", e);
+                self.state = EmuState::Pause;
+            }
         }
         Ok(())
     }
@@ -118,6 +122,7 @@ impl<'a> Emulator<'a> {
                 async { self.registers.r4.update() },
                 async { self.registers.r5.update() },
                 async { self.registers.r6.update() },
+                async { self.registers.rx.update() },
                 async { self.registers.sp.update() },
                 async { self.registers.fp.update() },
                 async { self.registers.pc.update() },
@@ -134,7 +139,7 @@ impl<'a> Emulator<'a> {
                         return Ok(());
                     }
                     MicroOp::Breakpoint => {
-                        println!("Breaking");
+                        println!("Breakpoint");
                         self.state = EmuState::Pause;
                         return Ok(());
                     }

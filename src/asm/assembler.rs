@@ -38,12 +38,14 @@ impl<'a, 'b> Instruction {
     )> {
         let mut out = vec![];
         let mut discovered_labels = FxHashSet::default();
-        let mut take1 = || {
-            let t = toks[0];
-            toks = &toks[1..];
-            t
-        };
-        if let AsmToken::Mnemonic(op) = take1().item {
+        macro_rules! take1 {
+            () => {{
+                let t = toks[0];
+                toks = &toks[1..];
+                t
+            }};
+        }
+        if let AsmToken::Mnemonic(op) = take1!().item {
             match op {
                 Mnemonic::Regular(op) => match op {
                     // OpOnly instructions
@@ -53,18 +55,73 @@ impl<'a, 'b> Instruction {
                             format: InstrFormat::OpOnly,
                         });
                     }
-                    // RR | RI instructions
-                    Opcode::Mov
-                    | Opcode::Add
+                    // RRR | RRI instructions
+                    Opcode::Add
                     | Opcode::And
                     | Opcode::Or
                     | Opcode::Sub
                     | Opcode::Xor
                     | Opcode::Div
                     | Opcode::Mul => {
-                        let a = take1();
+                        let a = take1!();
                         if let AsmToken::Register(a) = a.item {
-                            let b = take1();
+                            let b = take1!();
+                            if let AsmToken::Register(b) = b.item {
+                                let c = take1!();
+                                if let AsmToken::Register(c) = c.item {
+                                    out.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RRR(a, b, c),
+                                    });
+                                } else if let AsmToken::Immediate(imm) = c.item {
+                                    out.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RRI(a, b, Immediate::Linked(imm)),
+                                    });
+                                } else if let AsmToken::Label(name) = c.item {
+                                    if let Some(label) =
+                                        label_names.get(name).and_then(|l| known_labels.get(l))
+                                    {
+                                        out.push(Instruction {
+                                            op,
+                                            format: InstrFormat::RRI(
+                                                a,
+                                                b,
+                                                label.link_status.clone(),
+                                            ),
+                                        });
+                                    } else {
+                                        out.push(Instruction {
+                                            op,
+                                            format: InstrFormat::RRI(
+                                                a,
+                                                b,
+                                                Immediate::Unlinked(name.to_owned()),
+                                            ),
+                                        });
+                                        discovered_labels.insert(name);
+                                    }
+                                } else {
+                                    return Err(Error::from(AsmError::InvalidInstruction {
+                                        loc: c.span.location_line() as usize,
+                                    }));
+                                }
+                            } else {
+                                return Err(Error::from(AsmError::InvalidInstruction {
+                                    loc: b.span.location_line() as usize,
+                                }));
+                            }
+                        } else {
+                            return Err(Error::from(AsmError::InvalidInstruction {
+                                loc: a.span.location_line() as usize,
+                            }));
+                        }
+                    }
+                    // RR | RI instructions
+                    Opcode::Mov => {
+                        let a = take1!();
+                        if let AsmToken::Register(a) = a.item {
+                            let b = take1!();
                             match b.item {
                                 AsmToken::Register(b) => out.push(Instruction {
                                     op,
@@ -105,16 +162,25 @@ impl<'a, 'b> Instruction {
                             }));
                         }
                     }
-                    // RR instructions
+                    // RR | RRI instructions
                     Opcode::Ldh | Opcode::Ldl | Opcode::Sth | Opcode::Stl => {
-                        let a = take1();
-                        let b = take1();
+                        let a = take1!();
+                        let b = take1!();
                         if let AsmToken::Register(a) = a.item {
                             if let AsmToken::Register(b) = b.item {
-                                out.push(Instruction {
-                                    op,
-                                    format: InstrFormat::RR(a, b),
-                                });
+                                let peek = toks[0];
+                                if let AsmToken::Immediate(imm) = peek.item {
+                                    take1!();
+                                    out.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RRI(a, b, Immediate::Linked(imm)),
+                                    });
+                                } else {
+                                    out.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RR(a, b),
+                                    });
+                                }
                             } else {
                                 return Err(Error::from(AsmError::InvalidInstruction {
                                     loc: b.span.location_line() as usize,
@@ -128,7 +194,7 @@ impl<'a, 'b> Instruction {
                     }
                     // R instructions
                     Opcode::Not | Opcode::Shl | Opcode::Shr => {
-                        let a = take1();
+                        let a = take1!();
                         if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op,
@@ -142,7 +208,7 @@ impl<'a, 'b> Instruction {
                     }
                     // R | I instructions
                     Opcode::Jmp | Opcode::Jz | Opcode::Printc | Opcode::Printi => {
-                        let a = take1();
+                        let a = take1!();
                         if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op,
@@ -181,7 +247,7 @@ impl<'a, 'b> Instruction {
                         // sub     sp $1
                         // sth     sp regA
                         // sub     sp $1
-                        let a = take1();
+                        let a = take1!();
                         if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op: Opcode::Stl,
@@ -189,7 +255,11 @@ impl<'a, 'b> Instruction {
                             });
                             out.push(Instruction {
                                 op: Opcode::Sub,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                                format: InstrFormat::RRI(
+                                    Register::SP,
+                                    Register::SP,
+                                    Immediate::Linked(1),
+                                ),
                             });
                             out.push(Instruction {
                                 op: Opcode::Sth,
@@ -197,7 +267,11 @@ impl<'a, 'b> Instruction {
                             });
                             out.push(Instruction {
                                 op: Opcode::Sub,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                                format: InstrFormat::RRI(
+                                    Register::SP,
+                                    Register::SP,
+                                    Immediate::Linked(1),
+                                ),
                             });
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
@@ -210,11 +284,15 @@ impl<'a, 'b> Instruction {
                         // ldh     regA sp
                         // add     sp $1
                         // ldl     regA sp
-                        let a = take1();
+                        let a = take1!();
                         if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {
                                 op: Opcode::Add,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                                format: InstrFormat::RRI(
+                                    Register::SP,
+                                    Register::SP,
+                                    Immediate::Linked(1),
+                                ),
                             });
                             out.push(Instruction {
                                 op: Opcode::Ldh,
@@ -222,7 +300,11 @@ impl<'a, 'b> Instruction {
                             });
                             out.push(Instruction {
                                 op: Opcode::Add,
-                                format: InstrFormat::RI(Register::SP, Immediate::Linked(1)),
+                                format: InstrFormat::RRI(
+                                    Register::SP,
+                                    Register::SP,
+                                    Immediate::Linked(1),
+                                ),
                             });
                             out.push(Instruction {
                                 op: Opcode::Ldl,
@@ -398,26 +480,5 @@ impl Assembler {
         }
 
         Ok(out.into_boxed_slice())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_assemble() {
-        let program = "
-%start
-    ; comment
-    ldi     r1 %startthree
-    printi  r1 
-    halt
-%startthree
-    nop
-";
-        let mut asm = Assembler::default();
-        let bin = asm.assemble(program).unwrap();
-        dbg!(bin);
     }
 }

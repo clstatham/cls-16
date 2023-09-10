@@ -74,18 +74,18 @@ pub enum Compound {
     /// Equivalent to:
     /// ```text
     /// stl     sp regA
-    /// sub     sp $1
+    /// sub     sp sp $1
     /// sth     sp regA
-    /// sub     sp $1
+    /// sub     sp sp $1
     /// ```
     Push,
     /// Pops a value off the top of the stack and into a register.
     ///
     /// Equivalent to:
     /// ```text
-    /// add     sp $1
+    /// add     sp sp $1
     /// ldh     regA sp
-    /// add     sp $1
+    /// add     sp sp $1
     /// ldl     regA sp
     /// ```
     Pop,

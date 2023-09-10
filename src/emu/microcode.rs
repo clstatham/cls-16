@@ -108,8 +108,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Add, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Add, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeAdd,
@@ -117,8 +117,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Add, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Add, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeAdd,
@@ -126,8 +126,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Sub, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Sub, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeSub,
@@ -135,8 +135,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Sub, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Sub, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeSub,
@@ -144,8 +144,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Mul, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Mul, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeMul,
@@ -153,8 +153,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Mul, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Mul, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeMul,
@@ -162,8 +162,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Div, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Div, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeDiv,
@@ -171,8 +171,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Div, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Div, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeDiv,
@@ -180,8 +180,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::And, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::And, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeAnd,
@@ -189,8 +189,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::And, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::And, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeAnd,
@@ -198,8 +198,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Or, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Or, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeOr,
@@ -207,8 +207,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Or, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Or, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeOr,
@@ -216,8 +216,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Xor, InstrFormat::RR(dest, right)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Xor, InstrFormat::RRR(dest, left, right)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(right),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeXor,
@@ -225,8 +225,8 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
-            (Opcode::Xor, InstrFormat::RI(dest, _imm)) => vec![
-                MicroOp::SetAluLeft(dest),
+            (Opcode::Xor, InstrFormat::RRI(dest, left, _imm)) => vec![
+                MicroOp::SetAluLeft(left),
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeXor,
@@ -265,8 +265,36 @@ impl Instruction {
                 MicroOp::NoWriteRam,
                 MicroOp::SetRamLoopback,
             ],
+            (Opcode::Stl, InstrFormat::RRI(addr, inp, _addr_offset)) => vec![
+                MicroOp::SetAluLeft(Register::IH),
+                MicroOp::SetAluRight(addr),
+                MicroOp::SetAluResult(Register::RX),
+                MicroOp::SetAluModeAdd,
+                MicroOp::WriteReg(Register::RX),
+                MicroOp::NoWriteReg(Register::RX),
+                MicroOp::SetRegLoopback(Register::RX),
+                MicroOp::SetRamAddr(Register::RX),
+                MicroOp::SetRamDataLo(inp),
+                MicroOp::WriteRam,
+                MicroOp::NoWriteRam,
+                MicroOp::SetRamLoopback,
+            ],
             (Opcode::Sth, InstrFormat::RR(addr, inp)) => vec![
                 MicroOp::SetRamAddr(addr),
+                MicroOp::SetRamDataHi(inp),
+                MicroOp::WriteRam,
+                MicroOp::NoWriteRam,
+                MicroOp::SetRamLoopback,
+            ],
+            (Opcode::Sth, InstrFormat::RRI(addr, inp, _addr_offset)) => vec![
+                MicroOp::SetAluLeft(Register::IH),
+                MicroOp::SetAluRight(addr),
+                MicroOp::SetAluResult(Register::RX),
+                MicroOp::SetAluModeAdd,
+                MicroOp::WriteReg(Register::RX),
+                MicroOp::NoWriteReg(Register::RX),
+                MicroOp::SetRegLoopback(Register::RX),
+                MicroOp::SetRamAddr(Register::RX),
                 MicroOp::SetRamDataHi(inp),
                 MicroOp::WriteRam,
                 MicroOp::NoWriteRam,
@@ -279,8 +307,36 @@ impl Instruction {
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),
             ],
+            (Opcode::Ldl, InstrFormat::RRI(dest, addr, _addr_offset)) => vec![
+                MicroOp::SetAluLeft(Register::IH),
+                MicroOp::SetAluRight(addr),
+                MicroOp::SetAluResult(Register::RX),
+                MicroOp::SetAluModeAdd,
+                MicroOp::WriteReg(Register::RX),
+                MicroOp::NoWriteReg(Register::RX),
+                MicroOp::SetRegLoopback(Register::RX),
+                MicroOp::SetRamAddr(Register::RX),
+                MicroOp::SetRamOutputLo(dest),
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
             (Opcode::Ldh, InstrFormat::RR(dest, addr)) => vec![
                 MicroOp::SetRamAddr(addr),
+                MicroOp::SetRamOutputHi(dest),
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
+            (Opcode::Ldh, InstrFormat::RRI(dest, addr, _addr_offset)) => vec![
+                MicroOp::SetAluLeft(Register::IH),
+                MicroOp::SetAluRight(addr),
+                MicroOp::SetAluResult(Register::RX),
+                MicroOp::SetAluModeAdd,
+                MicroOp::WriteReg(Register::RX),
+                MicroOp::NoWriteReg(Register::RX),
+                MicroOp::SetRegLoopback(Register::RX),
+                MicroOp::SetRamAddr(Register::RX),
                 MicroOp::SetRamOutputHi(dest),
                 MicroOp::WriteReg(dest),
                 MicroOp::NoWriteReg(dest),

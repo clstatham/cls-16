@@ -9,7 +9,7 @@ use crate::{
 pub enum Storage {
     Immediate(Immediate),
     Register(Register),
-    RegOffset(u16, Register),
+    AddrOffset(u16, Register),
 }
 
 pub struct SsaInner {
@@ -55,7 +55,7 @@ impl Ssa {
     }
 
     pub fn get_reg_offset(&self) -> Option<(u16, Register)> {
-        if let Storage::RegOffset(off, reg) = self.inner.storage {
+        if let Storage::AddrOffset(off, reg) = self.inner.storage {
             Some((off, reg))
         } else {
             None
