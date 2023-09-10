@@ -74,6 +74,8 @@ pub enum MicroOp {
     SetPc(Register),
     /// Sets [PC][Register::PC] to the current value at the given register's output bus if [FL][Register::FL]'s "zero" bit is 1.
     SetPcIfZero(Register),
+    /// Sets [PC][Register::PC] to the current value at the given register's output bus if [FL][Register::FL]'s "carry" bit is 1.
+    SetPcIfCarry(Register),
 
     /* Debugging */
     /// See [`Opcode::Printi`][crate::plat::Opcode::Printi].
@@ -346,6 +348,8 @@ impl Instruction {
             (Opcode::Jmp, InstrFormat::I(_imm)) => vec![MicroOp::SetPc(Register::IH)],
             (Opcode::Jz, InstrFormat::R(addr)) => vec![MicroOp::SetPcIfZero(addr)],
             (Opcode::Jz, InstrFormat::I(_imm)) => vec![MicroOp::SetPcIfZero(Register::IH)],
+            (Opcode::Jc, InstrFormat::R(addr)) => vec![MicroOp::SetPcIfCarry(addr)],
+            (Opcode::Jc, InstrFormat::I(_imm)) => vec![MicroOp::SetPcIfCarry(Register::IH)],
             (Opcode::Printi, InstrFormat::R(reg)) => vec![MicroOp::Printi(reg)],
             (Opcode::Printi, InstrFormat::I(_imm)) => vec![MicroOp::Printi(Register::IH)],
             (Opcode::Printc, InstrFormat::R(reg)) => vec![MicroOp::Printc(reg)],

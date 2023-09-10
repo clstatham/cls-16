@@ -162,6 +162,13 @@ pub enum Opcode {
     /// }
     /// ```
     Jz,
+    /// "Jump if Carry"
+    ///```text
+    /// if FL.Carry == 1 {
+    ///     PC <- regA
+    /// }
+    /// ```
+    Jc,
     /// `PC <- regA`
     Jmp,
 
@@ -196,8 +203,9 @@ impl TryFrom<u8> for Opcode {
             v if v == Self::Ldl as u8 => Ok(Self::Ldl),
             v if v == Self::Ldh as u8 => Ok(Self::Ldh),
             v if v == Self::Mov as u8 => Ok(Self::Mov),
-            v if v == Self::Jmp as u8 => Ok(Self::Jmp),
             v if v == Self::Jz as u8 => Ok(Self::Jz),
+            v if v == Self::Jc as u8 => Ok(Self::Jc),
+            v if v == Self::Jmp as u8 => Ok(Self::Jmp),
             v if v == Self::Printi as u8 => Ok(Self::Printi),
             v if v == Self::Printc as u8 => Ok(Self::Printc),
             v if v == Self::B as u8 => Ok(Self::B),
@@ -342,7 +350,7 @@ impl Instruction {
                 )
             }
 
-            Opcode::Jz | Opcode::Jmp | Opcode::Printi | Opcode::Printc => {
+            Opcode::Jz | Opcode::Jc | Opcode::Jmp | Opcode::Printi | Opcode::Printc => {
                 matches!(self.format, InstrFormat::R(_) | InstrFormat::I(_))
             }
         }

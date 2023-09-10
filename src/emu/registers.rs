@@ -166,6 +166,7 @@ pub struct EmuRegisters {
 impl EmuRegisters {
     pub fn write(&mut self, reg: Register) -> Result<()> {
         match reg {
+            Register::R0 => {}
             Register::R1 => self.r1.write(),
             Register::R2 => self.r2.write(),
             Register::R3 => self.r3.write(),
@@ -182,6 +183,7 @@ impl EmuRegisters {
 
     pub fn no_write(&mut self, reg: Register) -> Result<()> {
         match reg {
+            Register::R0 => {}
             Register::R1 => self.r1.no_write(),
             Register::R2 => self.r2.no_write(),
             Register::R3 => self.r3.no_write(),
@@ -198,6 +200,7 @@ impl EmuRegisters {
 
     pub fn loopback(&mut self, reg: Register) -> Result<()> {
         match reg {
+            Register::R0 => {}
             Register::R1 => self.r1.loopback(),
             Register::R2 => self.r2.loopback(),
             Register::R3 => self.r3.loopback(),
@@ -214,6 +217,7 @@ impl EmuRegisters {
 
     pub fn route_input_hi(&mut self, reg: Register, output_bus: Receiver<u8>) -> Result<()> {
         match reg {
+            Register::R0 => {}
             Register::R1 => self.r1.route_input_hi(output_bus),
             Register::R2 => self.r2.route_input_hi(output_bus),
             Register::R3 => self.r3.route_input_hi(output_bus),
@@ -230,6 +234,7 @@ impl EmuRegisters {
 
     pub fn route_input_lo(&mut self, reg: Register, output_bus: Receiver<u8>) -> Result<()> {
         match reg {
+            Register::R0 => {}
             Register::R1 => self.r1.route_input_lo(output_bus),
             Register::R2 => self.r2.route_input_lo(output_bus),
             Register::R3 => self.r3.route_input_lo(output_bus),

@@ -207,7 +207,7 @@ impl<'a, 'b> Instruction {
                         }
                     }
                     // R | I instructions
-                    Opcode::Jmp | Opcode::Jz | Opcode::Printc | Opcode::Printi => {
+                    Opcode::Jmp | Opcode::Jz | Opcode::Jc | Opcode::Printc | Opcode::Printi => {
                         let a = take1!();
                         if let AsmToken::Register(a) = a.item {
                             out.push(Instruction {

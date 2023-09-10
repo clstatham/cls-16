@@ -128,8 +128,9 @@ impl<'a> Emulator<'a> {
                 async { self.registers.pc.update() },
                 async { self.registers.il.update() },
                 async { self.registers.ih.update() },
-                async { self.registers.fl.update() },
             );
+            self.registers.fl.value = self.alu.status.bits();
+            self.registers.fl.update();
 
             if let Some(op) = self.micro_op_cache.pop_front() {
                 log::trace!("> {:?}", op);
@@ -210,6 +211,15 @@ impl<'a> Emulator<'a> {
                     MicroOp::SetPcIfZero(reg) => {
                         let fl = Fl::from_bits_truncate(self.registers.fl.value);
                         if fl.contains(Fl::ZERO) {
+                            let lo = *self.registers.subscribe_lo(reg).borrow();
+                            let hi = *self.registers.subscribe_hi(reg).borrow();
+                            self.registers.pc.value = u16::from_le_bytes([lo, hi]);
+                            self.state = EmuState::ContinueDontUpdatePc;
+                        }
+                    }
+                    MicroOp::SetPcIfCarry(reg) => {
+                        let fl = Fl::from_bits_truncate(self.registers.fl.value);
+                        if fl.contains(Fl::CARRY) {
                             let lo = *self.registers.subscribe_lo(reg).borrow();
                             let hi = *self.registers.subscribe_hi(reg).borrow();
                             self.registers.pc.value = u16::from_le_bytes([lo, hi]);

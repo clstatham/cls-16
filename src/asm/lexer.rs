@@ -53,6 +53,7 @@ impl Opcode {
             alt((
                 value(Self::Jmp, tag_no_case("jmp")),
                 value(Self::Jz, tag_no_case("jz")),
+                value(Self::Jc, tag_no_case("jc")),
             )),
             alt((
                 value(Self::Printi, tag_no_case("printi")),

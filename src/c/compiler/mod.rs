@@ -1,12 +1,12 @@
 use anyhow::{Context, Error, Result};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     asm::Span,
     plat::{Immediate, InstrFormat, Instruction, Opcode, Register},
 };
 
-use self::ssa::{Ssa, Storage};
+use self::ssa::{Var, VarStorage};
 
 use super::{
     lexer::{gen::Keyword, lex_tokens},
@@ -33,9 +33,11 @@ impl Block {
 pub struct FunctionContext {
     pub return_type: TypeSpecifier,
     pub name: String,
-    pub args: Vec<Ssa>,
-    pool: FxHashMap<String, Ssa>,
-    stack_offset: u16,
+    pub args: Vec<Var>,
+    allocations: FxHashMap<String, Var>,
+    avail_regs: FxHashSet<Register>,
+    pub stack_offset: u16,
+    pub max_stack_offset: u16,
     pub code: Vec<Block>,
     pub epologue: Block,
 }
@@ -45,64 +47,94 @@ impl FunctionContext {
         self.code.last_mut()
     }
 
-    pub fn insert(&mut self, ssa: Ssa) {
-        self.pool.insert(ssa.name().to_owned(), ssa);
+    pub fn insert(&mut self, ssa: Var) {
+        self.allocations.insert(ssa.name().to_owned(), ssa);
     }
 
-    pub fn get(&self, name: &str) -> Option<Ssa> {
-        self.pool.get(name).cloned()
+    pub fn get(&self, name: &str) -> Option<Var> {
+        self.allocations.get(name).cloned()
     }
 
-    pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Ssa {
+    pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Var {
         self.stack_offset += 2;
-        let ssa = Ssa::new(
-            typ,
-            name,
-            ssa::Storage::AddrOffset(self.stack_offset, Register::FP),
-        );
-        self.pool.insert(name.to_owned(), ssa.clone());
+        self.max_stack_offset += 2;
+        let ssa = Var::new(typ, name, ssa::VarStorage::StackOffset(self.stack_offset));
+        self.allocations.insert(name.to_owned(), ssa.clone());
         ssa
     }
 
-    pub fn get_or_push(&mut self, name: &str, typ: TypeSpecifier) -> Ssa {
-        if let Some(ssa) = self.pool.get(name) {
+    pub fn get_or_push(&mut self, name: &str, typ: TypeSpecifier) -> Var {
+        if let Some(ssa) = self.allocations.get(name) {
             ssa.clone()
         } else {
             self.push(name, typ)
         }
     }
+
+    pub fn take_back_reg(&mut self, reg: Register) {
+        self.avail_regs.insert(reg);
+    }
+
+    pub fn take_back(&mut self, var: Var) {
+        if self.allocations.remove(var.name()).is_some() {
+            match var.storage() {
+                VarStorage::Register(reg) => {
+                    self.avail_regs.insert(*reg);
+                }
+                VarStorage::StackOffset(offset) => {
+                    if *offset == self.stack_offset {
+                        // pop the stack
+                        self.stack_offset -= 2;
+                    }
+                }
+                VarStorage::Immediate(_) => {}
+            }
+        }
+    }
+
+    pub fn any_reg(&mut self) -> Option<Register> {
+        [
+            Register::R1,
+            Register::R2,
+            Register::R3,
+            Register::R4,
+            Register::R5,
+            Register::R6,
+        ]
+        .into_iter()
+        .find(|&reg| self.avail_regs.remove(&reg))
+    }
 }
 
 #[inline]
 #[doc(hidden)]
-fn store_reg_to_reg_offset(addr: Register, addr_offset: u16, src: Register, block: &mut Block) {
+fn store_reg_to_reg_offset(addr_offset: u16, src: Register, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Stl,
-        format: InstrFormat::RRI(addr, src, Immediate::Linked(addr_offset)),
+        format: InstrFormat::RRI(Register::FP, src, Immediate::Linked(addr_offset)),
     });
     block.sequence.push(Instruction {
         op: Opcode::Sth,
-        format: InstrFormat::RRI(addr, src, Immediate::Linked(addr_offset + 1)),
+        format: InstrFormat::RRI(Register::FP, src, Immediate::Linked(addr_offset + 1)),
     });
 }
 
 #[inline]
 #[doc(hidden)]
-fn load_reg_offset_to_reg(dest: Register, addr: Register, addr_offset: u16, block: &mut Block) {
+fn load_reg_offset_to_reg(dest: Register, addr_offset: u16, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Ldl,
-        format: InstrFormat::RRI(dest, addr, Immediate::Linked(addr_offset)),
+        format: InstrFormat::RRI(dest, Register::FP, Immediate::Linked(addr_offset)),
     });
     block.sequence.push(Instruction {
         op: Opcode::Ldh,
-        format: InstrFormat::RRI(dest, addr, Immediate::Linked(addr_offset + 1)),
+        format: InstrFormat::RRI(dest, Register::FP, Immediate::Linked(addr_offset + 1)),
     });
 }
 
 #[derive(Default)]
 pub struct CompilerState {
     pub functions: FxHashMap<String, FunctionContext>,
-    pub out_buf: String,
 }
 
 impl CompilerState {
@@ -116,25 +148,26 @@ impl CompilerState {
         Ok(())
     }
 
-    /// Clobbers R4, R5.
-    fn compile_expr(&mut self, expr: &Expr<'_>, dest: Option<&Ssa>, func_name: &str) -> Result<()> {
+    fn compile_expr(&mut self, expr: &Expr<'_>, dest: Option<&Var>, func_name: &str) -> Result<()> {
         match expr {
             Expr::Ident(id) => {
                 if let Some(dest) = dest {
                     let func = self.functions.get_mut(func_name).unwrap();
                     let src = func.get(id.item.0).unwrap();
-                    let block = func.last_block_mut().unwrap();
+
                     match (dest.storage(), src.storage()) {
-                        (
-                            Storage::AddrOffset(dest_off, dest),
-                            Storage::AddrOffset(src_off, src),
-                        ) => {
-                            let tmp_reg = Register::R5;
-                            load_reg_offset_to_reg(tmp_reg, *src, *src_off, block);
-                            store_reg_to_reg_offset(*dest, *dest_off, tmp_reg, block);
+                        (VarStorage::StackOffset(dest_off), VarStorage::StackOffset(src_off)) => {
+                            let tmp_reg = func.any_reg().unwrap();
+                            {
+                                let block = func.last_block_mut().unwrap();
+                                load_reg_offset_to_reg(tmp_reg, *src_off, block);
+                                store_reg_to_reg_offset(*dest_off, tmp_reg, block);
+                            }
+                            func.take_back_reg(tmp_reg);
                         }
-                        (Storage::Register(dest), Storage::AddrOffset(src_off, src)) => {
-                            load_reg_offset_to_reg(*dest, *src, *src_off, block);
+                        (VarStorage::Register(dest), VarStorage::StackOffset(src_off)) => {
+                            let block = func.last_block_mut().unwrap();
+                            load_reg_offset_to_reg(*dest, *src_off, block);
                         }
 
                         st => todo!("{:?}", st),
@@ -146,21 +179,27 @@ impl CompilerState {
             Expr::Constant(val) => {
                 if let Some(dest) = dest {
                     let func = self.functions.get_mut(func_name).unwrap();
-                    let block = func.last_block_mut().unwrap();
+
                     let Constant::Integer(val) = val.item;
                     match dest.storage() {
-                        ssa::Storage::Immediate(_) => todo!("return an error here"),
-                        ssa::Storage::Register(reg) => block.sequence.push(Instruction {
-                            op: Opcode::Mov,
-                            format: InstrFormat::RI(*reg, Immediate::Linked(val)),
-                        }),
-                        ssa::Storage::AddrOffset(addr_offset, addr) => {
-                            let tmp_reg = Register::R5;
-                            block.sequence.push(Instruction {
+                        ssa::VarStorage::Immediate(_) => todo!("return an error here"),
+                        ssa::VarStorage::Register(reg) => {
+                            func.last_block_mut().unwrap().sequence.push(Instruction {
                                 op: Opcode::Mov,
-                                format: InstrFormat::RI(tmp_reg, Immediate::Linked(val)),
-                            });
-                            store_reg_to_reg_offset(*addr, *addr_offset, tmp_reg, block);
+                                format: InstrFormat::RI(*reg, Immediate::Linked(val)),
+                            })
+                        }
+                        ssa::VarStorage::StackOffset(addr_offset) => {
+                            let tmp_reg = func.any_reg().unwrap();
+                            {
+                                let block = func.last_block_mut().unwrap();
+                                block.sequence.push(Instruction {
+                                    op: Opcode::Mov,
+                                    format: InstrFormat::RI(tmp_reg, Immediate::Linked(val)),
+                                });
+                                store_reg_to_reg_offset(*addr_offset, tmp_reg, block);
+                            }
+                            func.take_back_reg(tmp_reg);
                         }
                     }
                 } else {
@@ -191,56 +230,59 @@ impl CompilerState {
                                 .functions
                                 .get_mut(func_name)
                                 .unwrap()
-                                .push("rhs", *dest.typ());
+                                .push("rhs", dest.typ());
                             self.compile_expr(&infix.rhs.item, Some(&rhs), func_name)?;
-                            let block = self
+                            let tmp_rhs = self
                                 .functions
                                 .get_mut(func_name)
                                 .unwrap()
-                                .last_block_mut()
+                                .any_reg()
                                 .unwrap();
+                            {
+                                let block = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .last_block_mut()
+                                    .unwrap();
 
-                            let op = match &infix.op.item {
-                                InfixOp::Add => Opcode::Add,
-                                InfixOp::Sub => Opcode::Sub,
-                                InfixOp::Mul => Opcode::Mul,
-                                InfixOp::Div => Opcode::Div,
-                                _ => unreachable!(),
-                            };
+                                let op = match &infix.op.item {
+                                    InfixOp::Add => Opcode::Add,
+                                    InfixOp::Sub => Opcode::Sub,
+                                    InfixOp::Mul => Opcode::Mul,
+                                    InfixOp::Div => Opcode::Div,
+                                    _ => unreachable!(),
+                                };
 
-                            let (rhs_offset, rhs_reg) = rhs.get_reg_offset().unwrap();
-                            // dest might be R5, so use R4
-                            let tmp_rhs = Register::R4;
-                            load_reg_offset_to_reg(tmp_rhs, rhs_reg, rhs_offset, block);
-                            match dest.storage() {
-                                Storage::Register(dest_reg) => {
-                                    block.sequence.push(Instruction {
-                                        op,
-                                        format: InstrFormat::RRR(*dest_reg, *dest_reg, tmp_rhs),
-                                    });
+                                let rhs_offset = rhs.get_stack_offset().unwrap();
+                                // dest might be R5, so use R4
+
+                                load_reg_offset_to_reg(tmp_rhs, rhs_offset, block);
+                                match dest.storage() {
+                                    VarStorage::Register(dest_reg) => {
+                                        block.sequence.push(Instruction {
+                                            op,
+                                            format: InstrFormat::RRR(*dest_reg, *dest_reg, tmp_rhs),
+                                        });
+                                    }
+                                    VarStorage::StackOffset(dest_offset) => {
+                                        // we know it's not R5, so this should be safe
+                                        let tmp_dest = Register::R5;
+                                        load_reg_offset_to_reg(tmp_dest, *dest_offset, block);
+                                        block.sequence.push(Instruction {
+                                            op,
+                                            format: InstrFormat::RRR(tmp_dest, tmp_dest, tmp_rhs),
+                                        });
+                                        store_reg_to_reg_offset(*dest_offset, tmp_dest, block);
+                                    }
+                                    VarStorage::Immediate(_) => todo!("error here"),
                                 }
-                                Storage::AddrOffset(dest_offset, dest_addr) => {
-                                    // we know it's not R5, so this should be safe
-                                    let tmp_dest = Register::R5;
-                                    load_reg_offset_to_reg(
-                                        tmp_dest,
-                                        *dest_addr,
-                                        *dest_offset,
-                                        block,
-                                    );
-                                    block.sequence.push(Instruction {
-                                        op,
-                                        format: InstrFormat::RRR(tmp_dest, tmp_dest, tmp_rhs),
-                                    });
-                                    store_reg_to_reg_offset(
-                                        *dest_addr,
-                                        *dest_offset,
-                                        tmp_dest,
-                                        block,
-                                    );
-                                }
-                                Storage::Immediate(_) => todo!("error here"),
                             }
+                            self.functions
+                                .get_mut(func_name)
+                                .unwrap()
+                                .take_back_reg(tmp_rhs);
+                            self.functions.get_mut(func_name).unwrap().take_back(rhs);
                         } else {
                             todo!("error here")
                         }
@@ -262,10 +304,10 @@ impl CompilerState {
             JumpStatement::Goto(label) => todo!(),
             JumpStatement::Return(value) => {
                 if let Some(expr) = value.as_ref().map(|v| &v.item) {
-                    let dest = Ssa::new(
+                    let dest = Var::new(
                         self.functions.get(func_name).unwrap().return_type,
                         "returnval",
-                        ssa::Storage::Register(Register::R1),
+                        ssa::VarStorage::Register(Register::R1),
                     );
                     self.compile_expr(expr, Some(&dest), func_name)?;
                 }
@@ -289,10 +331,10 @@ impl CompilerState {
     ) -> Result<()> {
         match stmt.builtin.item {
             Keyword::Printi => {
-                let dest = Ssa::new(
+                let dest = Var::new(
                     TypeSpecifier::Int,
                     "temp",
-                    ssa::Storage::Register(Register::R2),
+                    ssa::VarStorage::Register(Register::R2),
                 );
                 self.compile_expr(&stmt.expr.item, Some(&dest), func_name)?;
                 let block = self
@@ -347,8 +389,17 @@ impl CompilerState {
                 return_type: func.id.item.typ.item,
                 name: func_name.clone(),
                 args: vec![],
-                pool: FxHashMap::default(),
+                allocations: FxHashMap::default(),
+                avail_regs: FxHashSet::from_iter([
+                    Register::R1,
+                    Register::R2,
+                    Register::R3,
+                    Register::R4,
+                    Register::R5,
+                    Register::R6,
+                ]),
                 stack_offset: 0,
+                max_stack_offset: 0,
                 code: vec![Block::new(&format!("{func_name}outer"))],
                 epologue: Block::new(&format!("{func_name}epilogue")),
             };
@@ -376,7 +427,7 @@ impl CompilerState {
         }
     }
 
-    pub fn compile(&mut self, ast: &TranslationUnit<'_>) -> Result<()> {
+    pub fn compile(&mut self, ast: &TranslationUnit<'_>) -> Result<String> {
         for external in ast.0.iter() {
             self.compile_external_declaration(&external.item)
                 .context("compiling translation unit")?;
@@ -389,9 +440,9 @@ impl CompilerState {
                 lines.push("    mov sp $0xf000".to_owned());
                 lines.push("    mov fp sp".to_owned());
             }
-            lines.push("    push fp".to_owned());
-            lines.push("    mov fp sp".to_owned());
-            lines.push(format!("    sub sp sp ${}", func.stack_offset));
+            // lines.push("    push fp".to_owned());
+            lines.push(format!("    sub fp fp ${}", func.max_stack_offset));
+            lines.push("    mov sp fp".to_owned());
 
             for block in func.code.iter() {
                 lines.push(format!("%{}", block.label));
@@ -400,15 +451,14 @@ impl CompilerState {
                 }
             }
             lines.push(format!("%{func_name}epilogue"));
+            lines.push(format!("    add fp fp ${}", func.max_stack_offset));
             lines.push("    mov sp fp".to_owned());
-            lines.push("    pop fp".to_owned());
             for instr in func.epologue.sequence.iter() {
                 lines.push(format!("    {}", instr));
                 // }
             }
         }
-        self.out_buf = lines.join("\n");
-        Ok(())
+        Ok(lines.join("\n"))
     }
 }
 
@@ -471,7 +521,24 @@ pub fn compile(program_text: &str) -> Result<String> {
     }
 
     let mut state = CompilerState::default();
-    state.compile(&tu.item)?;
+    state.compile(&tu.item)
+}
 
-    Ok(state.out_buf)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compile() {
+        let program = r#"
+void start() {
+    int a = 0;
+    printi a;
+    a = 1;
+    printi a;
+    return;
+}"#;
+        let asm = compile(program).unwrap();
+        println!("{}", asm);
+    }
 }
