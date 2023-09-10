@@ -70,12 +70,11 @@ fn main() -> Result<()> {
             let program = compile(&c_program)?;
             if args.emit_asm {
                 let output = args.input.with_extension("s");
-                std::fs::write(output, program)?;
-            } else {
-                let program = Assembler.assemble(&program)?;
-                let output = args.input.with_extension("cls16");
-                std::fs::write(output, program)?;
+                std::fs::write(output, &program)?;
             }
+            let program = Assembler.assemble(&program)?;
+            let output = args.input.with_extension("cls16");
+            std::fs::write(output, program)?;
         }
         Command::Assemble(args) => {
             let asm_program = std::fs::read_to_string(&args.input)?;

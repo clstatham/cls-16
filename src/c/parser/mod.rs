@@ -4,7 +4,7 @@ use nom::{
     combinator::*,
     error::{Error, ErrorKind},
     multi::{many0, many1, separated_list0},
-    sequence::{delimited, terminated, tuple},
+    sequence::{delimited, preceded, terminated, tuple},
     Err, IResult,
 };
 
@@ -347,6 +347,72 @@ impl<'a> BuiltinStatement<'a> {
     }
 }
 
+impl<'a> IterationStatement<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        alt((
+            map(
+                tuple((
+                    kw_while,
+                    delimited(punc_oparen, Expr::parse, punc_cparen),
+                    Statement::parse,
+                )),
+                |(kw, cond, body)| WithSpan {
+                    span: kw.first_span(),
+                    item: IterationStatement {
+                        init: None,
+                        cond: Some(cond),
+                        step: None,
+                        body,
+                    },
+                },
+            ),
+            map(
+                tuple((
+                    kw_for,
+                    punc_oparen,
+                    opt(Expr::parse),
+                    punc_semicolon,
+                    opt(Expr::parse),
+                    punc_semicolon,
+                    opt(Expr::parse),
+                    punc_cparen,
+                    Statement::parse,
+                )),
+                |(kw, _, init, _, cond, _, step, _, body)| WithSpan {
+                    span: kw.first_span(),
+                    item: IterationStatement {
+                        init,
+                        cond,
+                        step,
+                        body,
+                    },
+                },
+            ),
+        ))(inp)
+    }
+}
+
+impl<'a> SelectionStatement<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        map(
+            tuple((
+                kw_if,
+                delimited(punc_oparen, Expr::parse, punc_cparen),
+                Statement::parse,
+                opt(preceded(kw_else, Statement::parse)),
+            )),
+            |(kw, cond, if_body, else_body)| WithSpan {
+                span: kw.first_span(),
+                item: SelectionStatement {
+                    cond,
+                    if_body,
+                    else_body,
+                },
+            },
+        )(inp)
+    }
+}
+
 impl<'a> Statement<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
         alt((
@@ -362,14 +428,22 @@ impl<'a> Statement<'a> {
                 span: stmt.span,
                 item: Statement::Compound(stmt),
             }),
+            map(terminated(Expr::parse, punc_semicolon), |stmt| WithSpan {
+                span: stmt.span,
+                item: Statement::Expr(stmt),
+            }),
+            map(SelectionStatement::parse, |stmt| WithSpan {
+                span: stmt.span,
+                item: Statement::Selection(Box::new(stmt)),
+            }),
+            map(IterationStatement::parse, |stmt| WithSpan {
+                span: stmt.span,
+                item: Statement::Iteration(Box::new(stmt)),
+            }),
             map(JumpStatement::parse, |stmt| WithSpan {
                 span: stmt.span,
                 item: Statement::Jump(stmt),
             }),
-            map(terminated(Expr::parse, punc_semicolon), |stmt| WithSpan {
-                span: stmt.span,
-                item: Statement::Expr(stmt),
-            }), // ...
         ))(inp)
     }
 }

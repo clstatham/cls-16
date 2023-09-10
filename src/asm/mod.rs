@@ -25,8 +25,8 @@ pub enum AsmError {
     Syntax { loc: (usize, usize), span: String },
     #[error("on line {}: found garbage: {}", .loc.0, .span)]
     FoundGarbage { loc: (usize, usize), span: String },
-    #[error("on line {}: invalid format for instruction", .loc)]
-    InvalidInstruction { loc: usize },
+    #[error("on line {}: invalid format for instruction: {}", .loc, .span)]
+    InvalidInstruction { loc: usize, span: String },
     #[error("on line {0}: unexpected token: {1}")]
     UnexpectedToken(usize, String),
     #[error("on line {0}: duplicate label found: {1}")]

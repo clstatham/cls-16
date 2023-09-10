@@ -104,16 +104,19 @@ impl<'a, 'b> Instruction {
                                 } else {
                                     return Err(Error::from(AsmError::InvalidInstruction {
                                         loc: c.span.location_line() as usize,
+                                        span: c.span.fragment().lines().next().unwrap().to_string(),
                                     }));
                                 }
                             } else {
                                 return Err(Error::from(AsmError::InvalidInstruction {
                                     loc: b.span.location_line() as usize,
+                                    span: b.span.fragment().lines().next().unwrap().to_string(),
                                 }));
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -153,12 +156,14 @@ impl<'a, 'b> Instruction {
                                 _ => {
                                     return Err(Error::from(AsmError::InvalidInstruction {
                                         loc: b.span.location_line() as usize,
+                                        span: b.span.fragment().lines().next().unwrap().to_string(),
                                     }));
                                 }
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -184,11 +189,13 @@ impl<'a, 'b> Instruction {
                             } else {
                                 return Err(Error::from(AsmError::InvalidInstruction {
                                     loc: b.span.location_line() as usize,
+                                    span: b.span.fragment().lines().next().unwrap().to_string(),
                                 }));
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -203,6 +210,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -237,6 +245,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -276,6 +285,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }
@@ -313,6 +323,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
+                                span: a.span.fragment().lines().next().unwrap().to_string(),
                             }));
                         }
                     }

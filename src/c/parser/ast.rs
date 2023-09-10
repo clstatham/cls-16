@@ -87,11 +87,28 @@ pub struct BuiltinStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct IterationStatement<'a> {
+    pub init: Option<WithSpan<'a, Expr<'a>>>,
+    pub cond: Option<WithSpan<'a, Expr<'a>>>,
+    pub step: Option<WithSpan<'a, Expr<'a>>>,
+    pub body: WithSpan<'a, Statement<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct SelectionStatement<'a> {
+    pub cond: WithSpan<'a, Expr<'a>>,
+    pub if_body: WithSpan<'a, Statement<'a>>,
+    pub else_body: Option<WithSpan<'a, Statement<'a>>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement<'a> {
     Labeled(Box<WithSpan<'a, LabeledStatement<'a>>>),
     Compound(WithSpan<'a, CompoundStatement<'a>>),
     Jump(WithSpan<'a, JumpStatement<'a>>),
     Builtin(WithSpan<'a, BuiltinStatement<'a>>),
+    Iteration(Box<WithSpan<'a, IterationStatement<'a>>>),
+    Selection(Box<WithSpan<'a, SelectionStatement<'a>>>),
     Expr(WithSpan<'a, Expr<'a>>),
 }
 
