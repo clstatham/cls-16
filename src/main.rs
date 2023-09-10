@@ -33,6 +33,7 @@ struct CompileArgs {
 struct RunArgs {
     #[clap(help = "Path to the CLS-16 binary to run")]
     input: PathBuf,
+    #[clap(short, long, help = "Clockrate to run the emulator at")]
     clockrate: Option<u32>,
 }
 
@@ -84,7 +85,7 @@ fn main() -> Result<()> {
         }
         Command::Run(args) => {
             let program = std::fs::read(&args.input)?;
-            let mut emu = Emulator::new(&program, args.clockrate.unwrap_or(24000).into())?;
+            let mut emu = Emulator::new(&program, args.clockrate.unwrap_or(2_000_000).into())?;
             emu.cont()?;
         }
     }

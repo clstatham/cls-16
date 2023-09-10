@@ -8,12 +8,8 @@
     stl fp r1 $0x2
     sth fp r1 $0x3
 %startinit1
-    mov r1 $0x64
-    stl fp r1 $0x2
-    sth fp r1 $0x3
 %startcond1
-    ldl r1 fp $0x2
-    ldh r1 fp $0x3
+    mov r1 $0x1
     stl fp r1 $0x4
     sth fp r1 $0x5
     ldl r1 fp $0x4
@@ -38,7 +34,7 @@
     ldh r1 fp $0x7
     ldl r5 fp $0x2
     ldh r5 fp $0x3
-    sub r5 r5 r1
+    add r5 r5 r1
     stl fp r5 $0x2
     sth fp r5 $0x3
     jmp %startcond1

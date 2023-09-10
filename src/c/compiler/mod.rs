@@ -6,7 +6,7 @@ use crate::{
     plat::{Immediate, InstrFormat, Instruction, Opcode, Register},
 };
 
-use self::ssa::{Var, VarStorage};
+use self::var::{Var, VarStorage};
 
 use super::{
     lexer::{gen::Keyword, lex_tokens},
@@ -14,7 +14,7 @@ use super::{
     CToken, CompError, Tokens,
 };
 
-pub mod ssa;
+pub mod var;
 
 pub struct Block {
     pub label: String,
@@ -58,7 +58,7 @@ impl FunctionContext {
     pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Var {
         self.stack_offset += 2;
         self.max_stack_offset += 2;
-        let ssa = Var::new(typ, name, ssa::VarStorage::StackOffset(self.stack_offset));
+        let ssa = Var::new(typ, name, var::VarStorage::StackOffset(self.stack_offset));
         self.allocations.insert(name.to_owned(), ssa.clone());
         ssa
     }
@@ -172,8 +172,6 @@ impl CompilerState {
 
                         st => todo!("{:?}", st),
                     }
-                } else {
-                    todo!()
                 }
             }
             Expr::Constant(val) => {
@@ -182,14 +180,14 @@ impl CompilerState {
 
                     let Constant::Integer(val) = val.item;
                     match dest.storage() {
-                        ssa::VarStorage::Immediate(_) => todo!("return an error here"),
-                        ssa::VarStorage::Register(reg) => {
+                        var::VarStorage::Immediate(_) => todo!("return an error here"),
+                        var::VarStorage::Register(reg) => {
                             func.last_block_mut().sequence.push(Instruction {
                                 op: Opcode::Mov,
                                 format: InstrFormat::RI(*reg, Immediate::Linked(val)),
                             })
                         }
-                        ssa::VarStorage::StackOffset(addr_offset) => {
+                        var::VarStorage::StackOffset(addr_offset) => {
                             let tmp_reg = func.any_reg().unwrap();
                             {
                                 let block = func.last_block_mut();
@@ -303,7 +301,7 @@ impl CompilerState {
                     let dest = Var::new(
                         self.functions.get(func_name).unwrap().return_type,
                         "returnval",
-                        ssa::VarStorage::Register(Register::R1),
+                        var::VarStorage::Register(Register::R1),
                     );
                     self.compile_expr(expr, Some(&dest), func_name)?;
                 }
@@ -330,7 +328,7 @@ impl CompilerState {
                 let dest = Var::new(
                     TypeSpecifier::Int,
                     "temp",
-                    ssa::VarStorage::Register(Register::R2),
+                    var::VarStorage::Register(Register::R2),
                 );
                 self.compile_expr(&stmt.expr.item, Some(&dest), func_name)?;
                 let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
