@@ -106,3 +106,5 @@ tag_token! { kw_unsigned, Keyword, Unsigned }
 tag_token! { kw_void, Keyword, Void }
 tag_token! { kw_volatile, Keyword, Volatile }
 tag_token! { kw_while, Keyword, While }
+// added for CLS-16
+tag_token! { kw_printi, Keyword, Printi }

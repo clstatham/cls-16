@@ -3,21 +3,25 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     asm::Span,
-    plat::{InstrFormat, Instruction, Opcode, Register},
+    plat::{Immediate, InstrFormat, Instruction, Opcode, Register},
 };
 
-use self::ssa::Ssa;
+use self::ssa::{Ssa, Storage};
 
-use super::{lexer::lex_tokens, parser::ast::*, CToken, CompError, Tokens};
+use super::{
+    lexer::{gen::Keyword, lex_tokens},
+    parser::ast::*,
+    CToken, CompError, Tokens,
+};
 
 pub mod ssa;
 
-pub struct Block<'a> {
+pub struct Block {
     pub label: String,
-    pub sequence: Vec<Instruction<'a>>,
+    pub sequence: Vec<Instruction>,
 }
 
-impl<'a> Block<'a> {
+impl Block {
     pub fn new(label: &str) -> Self {
         Self {
             label: label.to_owned(),
@@ -26,17 +30,22 @@ impl<'a> Block<'a> {
     }
 }
 
-pub struct FunctionContext<'a> {
-    pub name: String,
+pub struct FunctionContext {
     pub return_type: TypeSpecifier,
-    pub args: Vec<Ssa<'a>>,
-    pool: FxHashMap<String, Ssa<'a>>,
+    pub name: String,
+    pub args: Vec<Ssa>,
+    pool: FxHashMap<String, Ssa>,
     stack_offset: u16,
-    pub code: Vec<Block<'a>>,
+    pub code: Vec<Block>,
+    pub epologue: Block,
 }
 
-impl<'a> FunctionContext<'a> {
-    pub fn insert(&mut self, ssa: Ssa<'a>) {
+impl FunctionContext {
+    pub fn last_block_mut(&mut self) -> Option<&mut Block> {
+        self.code.last_mut()
+    }
+
+    pub fn insert(&mut self, ssa: Ssa) {
         self.pool.insert(ssa.name().to_owned(), ssa);
     }
 
@@ -44,7 +53,7 @@ impl<'a> FunctionContext<'a> {
         self.pool.get(name).cloned()
     }
 
-    pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Ssa<'a> {
+    pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Ssa {
         self.stack_offset += 2;
         let ssa = Ssa::new(
             typ,
@@ -64,33 +73,159 @@ impl<'a> FunctionContext<'a> {
     }
 }
 
+#[inline]
+#[doc(hidden)]
+fn store_reg_to_reg_offset_via_r6(
+    dest: Register,
+    dest_offset: u16,
+    src: Register,
+    block: &mut Block,
+) {
+    block.sequence.push(Instruction {
+        op: Opcode::Mov,
+        format: InstrFormat::RR(Register::R6, dest),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Add,
+        format: InstrFormat::RI(Register::R6, Immediate::Linked(dest_offset)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Stl,
+        format: InstrFormat::RR(Register::R6, src),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Add,
+        format: InstrFormat::RI(Register::R6, Immediate::Linked(1)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Sth,
+        format: InstrFormat::RR(Register::R6, src),
+    });
+}
+
+#[inline]
+#[doc(hidden)]
+fn load_reg_offset_to_reg_via_r6(
+    dest: Register,
+    src: Register,
+    src_offset: u16,
+    block: &mut Block,
+) {
+    block.sequence.push(Instruction {
+        op: Opcode::Mov,
+        format: InstrFormat::RR(Register::R6, src),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Add,
+        format: InstrFormat::RI(Register::R6, Immediate::Linked(src_offset)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Ldl,
+        format: InstrFormat::RR(dest, Register::R6),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Add,
+        format: InstrFormat::RI(Register::R6, Immediate::Linked(1)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Ldh,
+        format: InstrFormat::RR(dest, Register::R6),
+    });
+}
+
 #[derive(Default)]
-pub struct CompilerState<'a> {
-    pub functions: FxHashMap<String, FunctionContext<'a>>,
+pub struct CompilerState {
+    pub functions: FxHashMap<String, FunctionContext>,
     pub out_buf: String,
 }
 
-impl<'a> CompilerState<'a> {
+impl CompilerState {
     fn compile_local_decl(&mut self, decl: &Declaration<'_>, func_name: &str) -> Result<()> {
-        let ssa = self
+        let dest = self
             .functions
             .get_mut(func_name)
             .unwrap()
             .push(decl.id.item.id.item.0, decl.id.item.typ.item);
-        todo!()
+        self.compile_expr(&decl.expr.item, Some(&dest), func_name)?;
+        Ok(())
     }
 
-    fn compile_expr(
-        &mut self,
-        expr: &Expr<'_>,
-        dest: Option<&Ssa<'_>>,
-        func_name: &str,
-    ) -> Result<()> {
+    /// Clobbers R5.
+    fn compile_expr(&mut self, expr: &Expr<'_>, dest: Option<&Ssa>, func_name: &str) -> Result<()> {
         match expr {
-            Expr::Ident(id) => todo!(),
-            Expr::Constant(val) => todo!(),
-            Expr::Infix(infix) => todo!(),
+            Expr::Ident(id) => {
+                if let Some(dest) = dest {
+                    let func = self.functions.get_mut(func_name).unwrap();
+                    let src = func.get(id.item.0).unwrap();
+                    let block = func.last_block_mut().unwrap();
+                    match (dest.storage(), src.storage()) {
+                        (Storage::RegOffset(dest_off, dest), Storage::RegOffset(src_off, src)) => {
+                            let tmp_reg = Register::R5;
+                            load_reg_offset_to_reg_via_r6(tmp_reg, *src, *src_off, block);
+                            store_reg_to_reg_offset_via_r6(*dest, *dest_off, tmp_reg, block);
+                        }
+                        (Storage::Register(dest), Storage::RegOffset(src_off, src)) => {
+                            load_reg_offset_to_reg_via_r6(*dest, *src, *src_off, block);
+                        }
+
+                        st => todo!("{:?}", st),
+                    }
+                }
+            }
+            Expr::Constant(val) => {
+                if let Some(dest) = dest {
+                    let func = self.functions.get_mut(func_name).unwrap();
+                    let block = func.last_block_mut().unwrap();
+                    let Constant::Integer(val) = val.item;
+                    match dest.storage() {
+                        ssa::Storage::Immediate(_) => todo!("return an error here"),
+                        ssa::Storage::Register(reg) => block.sequence.push(Instruction {
+                            op: Opcode::Mov,
+                            format: InstrFormat::RI(*reg, Immediate::Linked(val)),
+                        }),
+                        ssa::Storage::RegOffset(off, reg) => {
+                            let tmp_reg = Register::R5;
+                            block.sequence.push(Instruction {
+                                op: Opcode::Mov,
+                                format: InstrFormat::RI(tmp_reg, Immediate::Linked(val)),
+                            });
+                            store_reg_to_reg_offset_via_r6(*reg, *off, tmp_reg, block);
+                        }
+                    }
+                } else {
+                    todo!("error here");
+                }
+            }
+            Expr::Infix(infix) => {
+                let infix = &infix.item;
+                match &infix.op.item {
+                    InfixOp::Assign => {
+                        if let Expr::Ident(lhs) = &infix.lhs.item {
+                            let dest = self
+                                .functions
+                                .get(func_name)
+                                .unwrap()
+                                .get(lhs.item.0)
+                                .unwrap();
+                            self.compile_expr(&infix.rhs.item, Some(&dest), func_name)?;
+                        } else {
+                            todo!("error here")
+                        }
+                    }
+                    InfixOp::Mul => todo!(),
+                    InfixOp::Add => todo!(),
+                    InfixOp::Sub => todo!(),
+                    InfixOp::Div => todo!(),
+                    InfixOp::EqEq => todo!(),
+                    InfixOp::NotEqual => todo!(),
+                    InfixOp::Lt => todo!(),
+                    InfixOp::LtEq => todo!(),
+                    InfixOp::Gt => todo!(),
+                    InfixOp::GtEq => todo!(),
+                }
+            }
         }
+        Ok(())
     }
 
     fn compile_jump_statement(&mut self, stmt: &JumpStatement<'_>, func_name: &str) -> Result<()> {
@@ -108,12 +243,9 @@ impl<'a> CompilerState<'a> {
                 if func_name == "start" {
                     // `start` is special, as we need to halt instead of returning
                     let func = self.functions.get_mut(func_name).unwrap();
-                    func.code.push(Block {
-                        label: "done".into(),
-                        sequence: vec![Instruction {
-                            op: Opcode::Halt,
-                            format: InstrFormat::OpOnly,
-                        }],
+                    func.epologue.sequence.push(Instruction {
+                        op: Opcode::Halt,
+                        format: InstrFormat::OpOnly,
                     });
                 }
             }
@@ -121,18 +253,52 @@ impl<'a> CompilerState<'a> {
         Ok(())
     }
 
+    fn compile_builtin_statement(
+        &mut self,
+        stmt: &BuiltinStatement<'_>,
+        func_name: &str,
+    ) -> Result<()> {
+        match stmt.builtin.item {
+            Keyword::Printi => {
+                let dest = Ssa::new(
+                    TypeSpecifier::Int,
+                    "temp",
+                    ssa::Storage::Register(Register::R2),
+                );
+                self.compile_expr(&stmt.expr.item, Some(&dest), func_name)?;
+                let block = self
+                    .functions
+                    .get_mut(func_name)
+                    .unwrap()
+                    .last_block_mut()
+                    .unwrap();
+                block.sequence.push(Instruction {
+                    op: Opcode::Printi,
+                    format: InstrFormat::R(Register::R2),
+                });
+            }
+            _ => todo!("error here"),
+        }
+        Ok(())
+    }
+
     fn compile_statement(&mut self, stmt: &Statement<'_>, func_name: &str) -> Result<()> {
         match stmt {
+            Statement::Builtin(stmt) => self
+                .compile_builtin_statement(&stmt.item, func_name)
+                .context("compiling statement"),
             Statement::Labeled(stmt) => todo!(),
             Statement::Compound(stmt) => todo!(),
             Statement::Jump(stmt) => self
                 .compile_jump_statement(&stmt.item, func_name)
                 .context("compiling statement"),
-            Statement::Expr(expr) => todo!(),
+            Statement::Expr(expr) => self
+                .compile_expr(&expr.item, None, func_name)
+                .context("compiling statement"),
         }
     }
 
-    fn compile_block_item(&mut self, block_item: &BlockItem<'a>, func_name: &str) -> Result<()> {
+    fn compile_block_item(&mut self, block_item: &BlockItem<'_>, func_name: &str) -> Result<()> {
         // let ctx = self.functions.get_mut(func_name).unwrap();
         match block_item {
             BlockItem::Declaration(decl) => self
@@ -144,17 +310,18 @@ impl<'a> CompilerState<'a> {
         }
     }
 
-    fn compile_function_definition(&mut self, func: &'a FunctionDefinition<'_>) -> Result<()> {
+    fn compile_function_definition(&mut self, func: &FunctionDefinition<'_>) -> Result<()> {
         let func_name = func.id.item.id.item.0.to_owned();
         if !self.functions.contains_key(&func_name) {
             log::debug!("Compiling function: {func_name}");
             let ctx = FunctionContext {
-                name: func_name.clone(),
                 return_type: func.id.item.typ.item,
+                name: func_name.clone(),
                 args: vec![],
                 pool: FxHashMap::default(),
                 stack_offset: 0,
-                code: vec![],
+                code: vec![Block::new(&format!("{func_name}outer"))],
+                epologue: Block::new(&format!("{func_name}epilogue")),
             };
             for _arg in func.param_list.iter() {
                 // args.push(Ssa::new(arg.item.typ.item, arg.item.id.item.0));
@@ -171,7 +338,7 @@ impl<'a> CompilerState<'a> {
         Ok(())
     }
 
-    fn compile_external_declaration(&mut self, inp: &'a ExternalDeclaration<'_>) -> Result<()> {
+    fn compile_external_declaration(&mut self, inp: &ExternalDeclaration<'_>) -> Result<()> {
         match inp {
             ExternalDeclaration::FunctionDefinition(func) => self
                 .compile_function_definition(&func.item)
@@ -180,7 +347,7 @@ impl<'a> CompilerState<'a> {
         }
     }
 
-    pub fn compile(&mut self, ast: &'a TranslationUnit<'_>) -> Result<()> {
+    pub fn compile(&mut self, ast: &TranslationUnit<'_>) -> Result<()> {
         for external in ast.0.iter() {
             self.compile_external_declaration(&external.item)
                 .context("compiling translation unit")?;
@@ -190,14 +357,25 @@ impl<'a> CompilerState<'a> {
             lines.push(format!("%{func_name}"));
             if func_name == "start" {
                 // setup a few things before we get into the code
-                lines.push("    mov     sp $0xf000".to_owned());
-                lines.push("    mov     fp sp".to_owned());
+                lines.push("    mov sp $0xf000".to_owned());
+                lines.push("    mov fp sp".to_owned());
             }
+            lines.push("    push fp".to_owned());
+            lines.push("    mov fp sp".to_owned());
+            lines.push(format!("    sub sp ${}", func.stack_offset));
+
             for block in func.code.iter() {
                 lines.push(format!("%{}", block.label));
                 for instr in block.sequence.iter() {
                     lines.push(format!("    {}", instr));
                 }
+            }
+            lines.push(format!("%{func_name}epilogue"));
+            lines.push("    mov sp fp".to_owned());
+            lines.push("    pop fp".to_owned());
+            for instr in func.epologue.sequence.iter() {
+                lines.push(format!("    {}", instr));
+                // }
             }
         }
         self.out_buf = lines.join("\n");

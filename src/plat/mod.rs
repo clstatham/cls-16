@@ -199,23 +199,23 @@ impl Display for Opcode {
 }
 
 /// An immediate value, either linked (with a raw value) or unlinked (with the symbol name).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Immediate<'a> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Immediate {
     Linked(u16),
-    Unlinked(&'a str),
+    Unlinked(String),
 }
 
-impl<'a> Immediate<'a> {
-    pub const fn get_linked(self) -> Option<u16> {
+impl Immediate {
+    pub const fn get_linked(&self) -> Option<u16> {
         if let Self::Linked(val) = self {
-            Some(val)
+            Some(*val)
         } else {
             None
         }
     }
 }
 
-impl<'a> Display for Immediate<'a> {
+impl Display for Immediate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Linked(val) => write!(f, "$0x{val:x}"),
@@ -228,26 +228,26 @@ impl<'a> Display for Immediate<'a> {
 ///
 /// Each instruction can be broken down into 4 bytes. The first is always the opcode.
 /// The following three are specified by one of this enum's variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InstrFormat<'a> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InstrFormat {
     /// 000 Opcode, Register, Register, Immediate
-    RRI(Register, Register, Immediate<'a>),
+    RRI(Register, Register, Immediate),
     /// 001 Opcode, Register, 0000, Immediate
-    RI(Register, Immediate<'a>),
+    RI(Register, Immediate),
     /// 010 Opcode, Register, Register, 0000 0000 0000 0000
     RR(Register, Register),
     /// 011 Opcode, Register, 0000, 0000 0000 0000 0000
     R(Register),
     /// 100 Opcode, 0000, 0000, Immediate
-    I(Immediate<'a>),
+    I(Immediate),
     /// 101 Opcode, 0000, 0000, 0000 0000 0000 0000
     OpOnly,
 }
 
-impl<'a> InstrFormat<'a> {
+impl InstrFormat {
     /// Encodes the instruction format into the upper 3 bits of the returned byte.
     #[rustfmt::skip]
-    pub const fn encode(self) -> u8 {
+    pub const fn encode(&self) -> u8 {
         match self {
             Self::RRI(_, _, _) =>   0b00000000,
             Self::RI(_, _) =>       0b00100000,
@@ -259,7 +259,7 @@ impl<'a> InstrFormat<'a> {
     }
 }
 
-impl<'a> Display for InstrFormat<'a> {
+impl Display for InstrFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RRI(a, b, imm) => write!(f, "{a} {b} {imm}"),
@@ -273,19 +273,19 @@ impl<'a> Display for InstrFormat<'a> {
 }
 
 /// A full 32-bit instruction word in CLS-16.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Instruction<'a> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Instruction {
     pub op: Opcode,
-    pub format: InstrFormat<'a>,
+    pub format: InstrFormat,
 }
 
-impl<'a> Instruction<'a> {
+impl Instruction {
     /// Checks if this instruction has a valid format for its opcode.
     ///
     /// # Errors
     ///
     /// This function will return an error if the instruction's format is invalid for its opcode.
-    pub fn validate(self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.is_valid() {
             Ok(())
         } else {
@@ -294,7 +294,7 @@ impl<'a> Instruction<'a> {
     }
 
     /// Returns `true` if this instruction has a valid format for its opcode.
-    pub const fn is_valid(self) -> bool {
+    pub const fn is_valid(&self) -> bool {
         #[doc(hidden)]
         macro_rules! assert_format {
             ($fmt:pat) => {
@@ -334,33 +334,33 @@ impl<'a> Instruction<'a> {
     /// # Errors
     ///
     /// This function will return an error if the instruction's format is invalid for its opcode.
-    pub fn to_bytes(self) -> Result<[u8; 4]> {
+    pub fn to_bytes(&self) -> Result<[u8; 4]> {
         self.validate()?;
         let op = self.op as u8 | self.format.encode();
-        let format = match self.format {
+        let format = match &self.format {
             InstrFormat::RRI(a, b, imm) => {
                 let imm = if let Immediate::Linked(imm) = imm {
-                    imm
+                    *imm
                 } else {
                     0
                 }
                 .to_le_bytes();
-                [(a as u8) << 4 | (b as u8), imm[0], imm[1]]
+                [(*a as u8) << 4 | (*b as u8), imm[0], imm[1]]
             }
             InstrFormat::RI(a, imm) => {
                 let imm = if let Immediate::Linked(imm) = imm {
-                    imm
+                    *imm
                 } else {
                     0
                 }
                 .to_le_bytes();
-                [(a as u8) << 4, imm[0], imm[1]]
+                [(*a as u8) << 4, imm[0], imm[1]]
             }
-            InstrFormat::RR(a, b) => [(a as u8) << 4 | (b as u8), 0, 0],
-            InstrFormat::R(a) => [(a as u8) << 4, 0, 0],
+            InstrFormat::RR(a, b) => [(*a as u8) << 4 | (*b as u8), 0, 0],
+            InstrFormat::R(a) => [(*a as u8) << 4, 0, 0],
             InstrFormat::I(imm) => {
                 let imm = if let Immediate::Linked(imm) = imm {
-                    imm
+                    *imm
                 } else {
                     0
                 }
@@ -419,7 +419,7 @@ impl<'a> Instruction<'a> {
     }
 }
 
-impl<'a> Display for Instruction<'a> {
+impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}", self.op, self.format)
     }

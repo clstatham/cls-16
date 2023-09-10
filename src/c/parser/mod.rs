@@ -16,7 +16,10 @@ use crate::asm::WithSpan;
 use self::ast::*;
 use self::gen::*;
 
-use super::{lexer::gen::Punctuator, CToken, Tokens};
+use super::{
+    lexer::gen::{Keyword, Punctuator},
+    CToken, Tokens,
+};
 
 #[doc(hidden)]
 macro_rules! tag_impl_no_lt {
@@ -70,7 +73,14 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
                 Precedence::Equals,
                 Some(WithSpan {
                     span: inp.span,
-                    item: InfixOp::Equal,
+                    item: InfixOp::Assign,
+                }),
+            ),
+            Punctuator::EqEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::EqEq,
                 }),
             ),
             Punctuator::BangEq => (
@@ -112,28 +122,28 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
                 Precedence::Sum,
                 Some(WithSpan {
                     span: inp.span,
-                    item: InfixOp::Plus,
+                    item: InfixOp::Add,
                 }),
             ),
             Punctuator::Minus => (
                 Precedence::Sum,
                 Some(WithSpan {
                     span: inp.span,
-                    item: InfixOp::Minus,
+                    item: InfixOp::Sub,
                 }),
             ),
             Punctuator::Star => (
                 Precedence::Product,
                 Some(WithSpan {
                     span: inp.span,
-                    item: InfixOp::Star,
+                    item: InfixOp::Mul,
                 }),
             ),
             Punctuator::FSlash => (
                 Precedence::Product,
                 Some(WithSpan {
                     span: inp.span,
-                    item: InfixOp::FSlash,
+                    item: InfixOp::Div,
                 }),
             ),
             Punctuator::OParen => (Precedence::Call, None),
@@ -254,8 +264,8 @@ impl<'a> Expr<'a> {
 impl<'a> Declaration<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
         map(
-            tuple((TypedIdent::parse, Expr::parse, punc_semicolon)),
-            |(id, expr, _)| WithSpan {
+            tuple((TypedIdent::parse, punc_equals, Expr::parse, punc_semicolon)),
+            |(id, _, expr, _)| WithSpan {
                 span: id.span,
                 item: Declaration { id, expr },
             },
@@ -322,9 +332,28 @@ impl<'a> LabeledStatement<'a> {
     }
 }
 
+impl<'a> BuiltinStatement<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        alt((map(
+            tuple((kw_printi, Expr::parse, punc_semicolon)),
+            |(kw, expr, _)| WithSpan {
+                span: kw.first_span(),
+                item: BuiltinStatement {
+                    builtin: kw.first_into(Keyword::Printi),
+                    expr,
+                },
+            },
+        ),))(inp)
+    }
+}
+
 impl<'a> Statement<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
         alt((
+            map(BuiltinStatement::parse, |stmt| WithSpan {
+                span: stmt.span,
+                item: Statement::Builtin(stmt),
+            }),
             map(LabeledStatement::parse, |stmt| WithSpan {
                 span: stmt.span,
                 item: Statement::Labeled(Box::new(stmt)),
@@ -376,10 +405,10 @@ impl<'a> ExternalDeclaration<'a> {
                 span: f.span,
                 item: ExternalDeclaration::FunctionDefinition(f),
             }),
-            map(Declaration::parse, |decl| WithSpan {
-                span: decl.span,
-                item: ExternalDeclaration::Declaration(decl),
-            }),
+            // map(Declaration::parse, |decl| WithSpan {
+            //     span: decl.span,
+            //     item: ExternalDeclaration::Declaration(decl),
+            // }),
         ))(inp)
     }
 }

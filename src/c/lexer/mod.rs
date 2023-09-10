@@ -40,7 +40,7 @@ pub fn lex_ident(inp: Span<'_>) -> IResult<Span<'_>, SpanToken<'_>> {
 pub fn lex_integer(inp: Span<'_>) -> IResult<Span<'_>, SpanToken<'_>> {
     map(recognize(many1(one_of(DIGIT))), |span: Span<'_>| WithSpan {
         span,
-        item: CToken::Constant(Constant::Integer(span.parse::<i64>().unwrap())),
+        item: CToken::Constant(Constant::Integer(span.parse::<u16>().unwrap())),
     })(inp)
 }
 

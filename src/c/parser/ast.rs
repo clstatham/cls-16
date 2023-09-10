@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::asm::WithSpan;
+use crate::{asm::WithSpan, c::lexer::gen::Keyword};
 
 #[derive(PartialEq, Clone, Copy)]
 pub struct Ident<'a>(pub &'a str);
@@ -13,7 +13,7 @@ impl<'a> Debug for Ident<'a> {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Constant {
-    Integer(i64),
+    Integer(u16),
     // FloatingPoint(f64),
     // Character(char),
 }
@@ -32,11 +32,12 @@ pub enum TypeSpecifier {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum InfixOp {
-    Star,
-    Plus,
-    Minus,
-    FSlash,
-    Equal,
+    Assign,
+    Mul,
+    Add,
+    Sub,
+    Div,
+    EqEq,
     NotEqual,
     Lt,
     LtEq,
@@ -80,10 +81,17 @@ pub struct LabeledStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct BuiltinStatement<'a> {
+    pub builtin: WithSpan<'a, Keyword>,
+    pub expr: WithSpan<'a, Expr<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement<'a> {
     Labeled(Box<WithSpan<'a, LabeledStatement<'a>>>),
     Compound(WithSpan<'a, CompoundStatement<'a>>),
     Jump(WithSpan<'a, JumpStatement<'a>>),
+    Builtin(WithSpan<'a, BuiltinStatement<'a>>),
     Expr(WithSpan<'a, Expr<'a>>),
 }
 

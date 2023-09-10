@@ -3,9 +3,8 @@
 
 use anyhow::Result;
 use asm::Assembler;
+use c::compiler::compile;
 use emu::emulator::Emulator;
-
-use crate::c::compiler::compile;
 
 pub mod asm;
 pub mod c;
@@ -19,6 +18,7 @@ fn main() -> Result<()> {
 
     let c_program = include_str!("../ctest.c");
     let program = compile(c_program)?;
+    println!("{}", program);
 
     // let program = include_str!("../test.s");
     let mut asm = Assembler::default();

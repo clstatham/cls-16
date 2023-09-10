@@ -80,7 +80,7 @@ pub enum MicroOp {
     Breakpoint,
 }
 
-impl<'a> Instruction<'a> {
+impl Instruction {
     /// Translates the instruction to its corresponding sequence of [MicroOp]s.
     ///
     /// # Errors

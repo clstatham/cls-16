@@ -54,6 +54,9 @@ pub enum Keyword {
     Void,
     Volatile,
     While,
+
+    // added for CLS-16
+    Printi,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -142,6 +145,8 @@ syntax! { kw_unsigned, "unsigned", Keyword, Unsigned }
 syntax! { kw_void, "void", Keyword, Void }
 syntax! { kw_volatile, "volatile", Keyword, Volatile }
 syntax! { kw_while, "while", Keyword, While }
+// added for CLS-16
+syntax! { kw_printi, "printi", Keyword, Printi }
 
 syntax! { punc_obrack, "[", Punctuator, OBrack }
 syntax! { punc_cbrack, "]", Punctuator, CBrack }
@@ -231,6 +236,7 @@ pub fn lex_keyword(inp: Span<'_>) -> IResult<Span<'_>, WithSpan<'_, CToken<'_>>>
             kw_void,
             kw_volatile,
             kw_while,
+            kw_printi,
         )),
     ))(inp)
 }

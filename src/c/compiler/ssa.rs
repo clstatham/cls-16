@@ -5,25 +5,26 @@ use crate::{
     plat::{Immediate, Register},
 };
 
-pub enum Storage<'a> {
-    Immediate(Immediate<'a>),
+#[derive(Debug)]
+pub enum Storage {
+    Immediate(Immediate),
     Register(Register),
     RegOffset(u16, Register),
 }
 
-pub struct SsaInner<'a> {
+pub struct SsaInner {
     pub typ: TypeSpecifier,
     pub name: String,
-    pub storage: Storage<'a>,
+    pub storage: Storage,
 }
 
 #[derive(Clone)]
-pub struct Ssa<'a> {
-    pub inner: Rc<SsaInner<'a>>,
+pub struct Ssa {
+    pub inner: Rc<SsaInner>,
 }
 
-impl<'a> Ssa<'a> {
-    pub fn new(typ: TypeSpecifier, name: &str, storage: Storage<'a>) -> Self {
+impl Ssa {
+    pub fn new(typ: TypeSpecifier, name: &str, storage: Storage) -> Self {
         Self {
             inner: Rc::new(SsaInner {
                 typ,
@@ -61,8 +62,8 @@ impl<'a> Ssa<'a> {
         }
     }
 
-    pub fn get_immediate(&self) -> Option<Immediate<'_>> {
-        if let Storage::Immediate(imm) = self.inner.storage {
+    pub fn get_immediate(&self) -> Option<&Immediate> {
+        if let Storage::Immediate(imm) = &self.inner.storage {
             Some(imm)
         } else {
             None

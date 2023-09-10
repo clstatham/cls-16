@@ -15,8 +15,8 @@ use super::{AsmError, AsmToken, Compound, WithSpan};
 pub struct Label<'a> {
     pub order: usize,
     pub name: &'a str,
-    pub link_status: Immediate<'a>,
-    pub instructions: Vec<Instruction<'a>>,
+    pub link_status: Immediate,
+    pub instructions: Vec<Instruction>,
 }
 
 impl<'a> Label<'a> {
@@ -25,7 +25,7 @@ impl<'a> Label<'a> {
     }
 }
 
-impl<'a, 'b> Instruction<'a> {
+impl<'a, 'b> Instruction {
     #[allow(clippy::type_complexity)]
     pub(crate) fn from_tokens(
         mut toks: &'b [WithSpan<'a, AsmToken<'a>>],
@@ -78,12 +78,15 @@ impl<'a, 'b> Instruction<'a> {
                                     {
                                         out.push(Instruction {
                                             op,
-                                            format: InstrFormat::RI(a, label.link_status),
+                                            format: InstrFormat::RI(a, label.link_status.clone()),
                                         });
                                     } else {
                                         out.push(Instruction {
                                             op,
-                                            format: InstrFormat::RI(a, Immediate::Unlinked(name)),
+                                            format: InstrFormat::RI(
+                                                a,
+                                                Immediate::Unlinked(name.to_owned()),
+                                            ),
                                         });
                                         discovered_labels.insert(name);
                                     }
@@ -154,12 +157,12 @@ impl<'a, 'b> Instruction<'a> {
                             {
                                 out.push(Instruction {
                                     op,
-                                    format: InstrFormat::I(label.link_status),
+                                    format: InstrFormat::I(label.link_status.clone()),
                                 });
                             } else {
                                 out.push(Instruction {
                                     op,
-                                    format: InstrFormat::I(Immediate::Unlinked(name)),
+                                    format: InstrFormat::I(Immediate::Unlinked(name.to_owned())),
                                 });
                                 discovered_labels.insert(name);
                             }
@@ -267,7 +270,7 @@ impl Assembler {
                     let mut lab = Label {
                         order: labels.len(),
                         name,
-                        link_status: Immediate::Unlinked(name),
+                        link_status: Immediate::Unlinked(name.to_owned()),
                         instructions: vec![],
                     };
 
@@ -322,12 +325,12 @@ impl Assembler {
                 label.link_status = Immediate::Linked(pc);
                 // check if we've resolved any references in this label's code yet
                 for instr in label.instructions.iter_mut() {
-                    if let InstrFormat::RRI(_, _, Immediate::Unlinked(undefined)) = instr.format {
+                    if let InstrFormat::RRI(_, _, Immediate::Unlinked(undefined)) = &instr.format {
                         undefined_locations.insert(pc, undefined.to_string());
-                    } else if let InstrFormat::RI(_, Immediate::Unlinked(undefined)) = instr.format
+                    } else if let InstrFormat::RI(_, Immediate::Unlinked(undefined)) = &instr.format
                     {
                         undefined_locations.insert(pc, undefined.to_string());
-                    } else if let InstrFormat::I(Immediate::Unlinked(undefined)) = instr.format {
+                    } else if let InstrFormat::I(Immediate::Unlinked(undefined)) = &instr.format {
                         undefined_locations.insert(pc, undefined.to_string());
                     }
 

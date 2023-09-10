@@ -37,7 +37,7 @@ pub struct Emulator<'a> {
     pub alu: Alu,
     pub ram: Ram,
     pub state: EmuState,
-    pub instr_history: VecDeque<Instruction<'a>>,
+    pub instr_history: VecDeque<Instruction>,
     program_memory: &'a [u8],
     micro_op_cache: VecDeque<MicroOp>,
     clock: Interval,
@@ -239,7 +239,7 @@ impl<'a> Emulator<'a> {
                     current_instr[2],
                     current_instr[3],
                 ])?;
-                self.instr_history.push_back(current_instr);
+                self.instr_history.push_back(current_instr.clone());
                 log::debug!(">>> {}", current_instr);
                 self.micro_op_cache = current_instr.to_microcode()?.into();
             }
