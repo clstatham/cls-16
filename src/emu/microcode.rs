@@ -34,6 +34,10 @@ pub enum MicroOp {
     SetAluModeAdd,
     /// Sets the ALU's mode to "subtract".
     SetAluModeSub,
+    /// Sets the ALU's mode to "multiply".
+    SetAluModeMul,
+    /// Sets the ALU's mode to "divide".
+    SetAluModeDiv,
     /// Sets the ALU's mode to "bitwise and".
     SetAluModeAnd,
     /// Sets the ALU's mode to "bitwise or".
@@ -136,6 +140,42 @@ impl Instruction {
                 MicroOp::SetAluRight(Register::IH),
                 MicroOp::SetAluResult(dest),
                 MicroOp::SetAluModeSub,
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
+            (Opcode::Mul, InstrFormat::RR(dest, right)) => vec![
+                MicroOp::SetAluLeft(dest),
+                MicroOp::SetAluRight(right),
+                MicroOp::SetAluResult(dest),
+                MicroOp::SetAluModeMul,
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
+            (Opcode::Mul, InstrFormat::RI(dest, _imm)) => vec![
+                MicroOp::SetAluLeft(dest),
+                MicroOp::SetAluRight(Register::IH),
+                MicroOp::SetAluResult(dest),
+                MicroOp::SetAluModeMul,
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
+            (Opcode::Div, InstrFormat::RR(dest, right)) => vec![
+                MicroOp::SetAluLeft(dest),
+                MicroOp::SetAluRight(right),
+                MicroOp::SetAluResult(dest),
+                MicroOp::SetAluModeDiv,
+                MicroOp::WriteReg(dest),
+                MicroOp::NoWriteReg(dest),
+                MicroOp::SetRegLoopback(dest),
+            ],
+            (Opcode::Div, InstrFormat::RI(dest, _imm)) => vec![
+                MicroOp::SetAluLeft(dest),
+                MicroOp::SetAluRight(Register::IH),
+                MicroOp::SetAluResult(dest),
+                MicroOp::SetAluModeDiv,
                 MicroOp::WriteReg(dest),
                 MicroOp::NoWriteReg(dest),
                 MicroOp::SetRegLoopback(dest),

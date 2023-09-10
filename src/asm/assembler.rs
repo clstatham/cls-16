@@ -59,7 +59,9 @@ impl<'a, 'b> Instruction {
                     | Opcode::And
                     | Opcode::Or
                     | Opcode::Sub
-                    | Opcode::Xor => {
+                    | Opcode::Xor
+                    | Opcode::Div
+                    | Opcode::Mul => {
                         let a = take1();
                         if let AsmToken::Register(a) = a.item {
                             let b = take1();

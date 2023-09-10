@@ -112,6 +112,12 @@ pub enum Opcode {
     /// `regA <- regB - regC`
     /// `regA <- regA - (immediate value)`
     Sub,
+    /// `regA <- regB * regC`
+    /// `regA <- regA * (immediate value)`
+    Mul,
+    /// `regA <- regB / regC`
+    /// `regA <- regA / (immediate value)`
+    Div,
     /// `regA <- regB & regC`
     /// `regA <- regA & (immediate value)`
     And,
@@ -169,6 +175,8 @@ impl TryFrom<u8> for Opcode {
             v if v == Self::Nop as u8 => Ok(Self::Nop),
             v if v == Self::Add as u8 => Ok(Self::Add),
             v if v == Self::Sub as u8 => Ok(Self::Sub),
+            v if v == Self::Mul as u8 => Ok(Self::Mul),
+            v if v == Self::Div as u8 => Ok(Self::Div),
             v if v == Self::And as u8 => Ok(Self::And),
             v if v == Self::Or as u8 => Ok(Self::Or),
             v if v == Self::Xor as u8 => Ok(Self::Xor),
@@ -309,6 +317,8 @@ impl Instruction {
             Opcode::Mov => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::Add => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::Sub => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
+            Opcode::Mul => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
+            Opcode::Div => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::And => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::Or => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),
             Opcode::Xor => assert_format!(InstrFormat::RR(_, _) | InstrFormat::RI(_, _)),

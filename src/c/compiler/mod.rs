@@ -150,7 +150,7 @@ impl CompilerState {
         Ok(())
     }
 
-    /// Clobbers R5.
+    /// Clobbers R4, R5, R6.
     fn compile_expr(&mut self, expr: &Expr<'_>, dest: Option<&Ssa>, func_name: &str) -> Result<()> {
         match expr {
             Expr::Ident(id) => {
@@ -197,6 +197,7 @@ impl CompilerState {
                 }
             }
             Expr::Infix(infix) => {
+                // if let Some(dest) = dest {
                 let infix = &infix.item;
                 match &infix.op.item {
                     InfixOp::Assign => {
@@ -212,10 +213,67 @@ impl CompilerState {
                             todo!("error here")
                         }
                     }
-                    InfixOp::Mul => todo!(),
-                    InfixOp::Add => todo!(),
-                    InfixOp::Sub => todo!(),
-                    InfixOp::Div => todo!(),
+                    InfixOp::Add | InfixOp::Div | InfixOp::Mul | InfixOp::Sub => {
+                        if let Some(dest) = dest {
+                            self.compile_expr(&infix.lhs.item, Some(dest), func_name)?;
+                            let rhs = self
+                                .functions
+                                .get_mut(func_name)
+                                .unwrap()
+                                .push("rhs", *dest.typ());
+                            self.compile_expr(&infix.rhs.item, Some(&rhs), func_name)?;
+                            let block = self
+                                .functions
+                                .get_mut(func_name)
+                                .unwrap()
+                                .last_block_mut()
+                                .unwrap();
+
+                            let op = match &infix.op.item {
+                                InfixOp::Add => Opcode::Add,
+                                InfixOp::Sub => Opcode::Sub,
+                                InfixOp::Mul => Opcode::Mul,
+                                InfixOp::Div => Opcode::Div,
+                                _ => unreachable!(),
+                            };
+
+                            let (rhs_offset, rhs_reg) = rhs.get_reg_offset().unwrap();
+                            // dest might be R5, so use R4
+                            let tmp_rhs = Register::R4;
+                            load_reg_offset_to_reg_via_r6(tmp_rhs, rhs_reg, rhs_offset, block);
+                            match dest.storage() {
+                                Storage::Register(dest_reg) => {
+                                    block.sequence.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RR(*dest_reg, tmp_rhs),
+                                    });
+                                }
+                                Storage::RegOffset(dest_offset, dest_addr) => {
+                                    // we know it's not R5, so this should be safe
+                                    let tmp_dest = Register::R5;
+                                    load_reg_offset_to_reg_via_r6(
+                                        tmp_dest,
+                                        *dest_addr,
+                                        *dest_offset,
+                                        block,
+                                    );
+                                    block.sequence.push(Instruction {
+                                        op,
+                                        format: InstrFormat::RR(tmp_dest, tmp_rhs),
+                                    });
+                                    store_reg_to_reg_offset_via_r6(
+                                        *dest_addr,
+                                        *dest_offset,
+                                        tmp_dest,
+                                        block,
+                                    );
+                                }
+                                Storage::Immediate(_) => todo!("error here"),
+                            }
+                        } else {
+                            todo!("error here")
+                        }
+                    }
                     InfixOp::EqEq => todo!(),
                     InfixOp::NotEqual => todo!(),
                     InfixOp::Lt => todo!(),

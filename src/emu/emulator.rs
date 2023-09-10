@@ -167,6 +167,8 @@ impl<'a> Emulator<'a> {
                     }
                     MicroOp::SetAluModeAdd => self.alu.mode = AluMode::Add,
                     MicroOp::SetAluModeSub => self.alu.mode = AluMode::Sub,
+                    MicroOp::SetAluModeDiv => self.alu.mode = AluMode::Div,
+                    MicroOp::SetAluModeMul => self.alu.mode = AluMode::Mul,
                     MicroOp::SetAluModeAnd => self.alu.mode = AluMode::And,
                     MicroOp::SetAluModeOr => self.alu.mode = AluMode::Or,
                     MicroOp::SetAluModeXor => self.alu.mode = AluMode::Xor,

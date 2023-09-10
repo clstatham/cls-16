@@ -34,6 +34,8 @@ impl Opcode {
             alt((
                 value(Self::Add, tag_no_case("add")),
                 value(Self::Sub, tag_no_case("sub")),
+                value(Self::Mul, tag_no_case("mul")),
+                value(Self::Div, tag_no_case("div")),
                 value(Self::And, tag_no_case("and")),
                 value(Self::Or, tag_no_case("or")),
                 value(Self::Xor, tag_no_case("xor")),

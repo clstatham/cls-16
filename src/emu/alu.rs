@@ -6,6 +6,8 @@ use tokio::sync::watch::{channel, Receiver, Sender};
 pub enum AluMode {
     Add = 0,
     Sub,
+    Mul,
+    Div,
     And,
     Or,
     Xor,
@@ -88,6 +90,16 @@ impl Alu {
             }
             AluMode::Sub => {
                 let (result, overflow) = left.overflowing_sub(right);
+                self.status.set(AluStatus::CARRY, overflow);
+                result
+            }
+            AluMode::Mul => {
+                let (result, overflow) = left.overflowing_mul(right);
+                self.status.set(AluStatus::CARRY, overflow);
+                result
+            }
+            AluMode::Div => {
+                let (result, overflow) = left.overflowing_div(right);
                 self.status.set(AluStatus::CARRY, overflow);
                 result
             }

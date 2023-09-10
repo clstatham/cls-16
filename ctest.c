@@ -1,7 +1,5 @@
 void start() {
-    int i = 1337;
-    printi i;
-    i = 420;
-    printi i;
+    int i = 2 + 420;
+    printi i / 2;
     return;
 }
