@@ -3,7 +3,7 @@ use nom::{
     bytes::complete::*,
     combinator::*,
     error::{Error, ErrorKind},
-    multi::{many0, many1, separated_list0},
+    multi::{many0, separated_list0},
     sequence::{delimited, preceded, terminated, tuple},
     Err, IResult,
 };
