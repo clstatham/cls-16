@@ -239,8 +239,40 @@ impl<'a> TypedIdent<'a> {
     }
 }
 
+impl<'a> CallExpr<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        map(
+            tuple((
+                Ident::parse,
+                delimited(
+                    punc_oparen,
+                    separated_list0(punc_comma, Expr::parse),
+                    punc_cparen,
+                ),
+            )),
+            |(id, args)| WithSpan {
+                span: id.span,
+                item: CallExpr { func: id, args },
+            },
+        )(inp)
+    }
+}
+
+impl<'a> PostfixExpr<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        map(CallExpr::parse, |call| WithSpan {
+            span: call.span,
+            item: PostfixExpr::Call(call),
+        })(inp)
+    }
+}
+
 pub fn parse_atom_expr(inp: Tokens) -> IResult<Tokens, WithSpan<Expr>> {
     alt((
+        map(PostfixExpr::parse, |post| WithSpan {
+            span: post.span,
+            item: Expr::Postfix(Box::new(post)),
+        }),
         map(Constant::parse, |con| WithSpan {
             span: con.span,
             item: Expr::Constant(con),
@@ -546,7 +578,7 @@ impl<'a> ExternalDeclaration<'a> {
 
 impl<'a> TranslationUnit<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
-        map(many1(ExternalDeclaration::parse), |decls| WithSpan {
+        map(many0(ExternalDeclaration::parse), |decls| WithSpan {
             span: inp.first_span(),
             item: TranslationUnit(decls),
         })(inp)

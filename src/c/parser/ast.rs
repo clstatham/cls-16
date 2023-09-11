@@ -143,6 +143,18 @@ pub struct InfixExpr<'a> {
     pub rhs: WithSpan<'a, Expr<'a>>,
 }
 
+#[derive(PartialEq, Debug, Clone)]
+pub struct CallExpr<'a> {
+    pub func: WithSpan<'a, Ident<'a>>,
+    pub args: Vec<WithSpan<'a, Expr<'a>>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum PostfixExpr<'a> {
+    Call(WithSpan<'a, CallExpr<'a>>),
+    // Index(WithSpan<'a, IndexExpr<'a>>),
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
 pub enum Precedence {
     Lowest,
@@ -160,6 +172,7 @@ pub enum Expr<'a> {
     Ident(WithSpan<'a, Ident<'a>>),
     Constant(WithSpan<'a, Constant>),
     Infix(Box<WithSpan<'a, InfixExpr<'a>>>),
+    Postfix(Box<WithSpan<'a, PostfixExpr<'a>>>),
 }
 
 #[derive(PartialEq, Debug, Clone)]

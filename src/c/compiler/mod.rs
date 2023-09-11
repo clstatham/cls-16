@@ -33,12 +33,12 @@ impl Block {
 pub struct FunctionContext {
     pub return_type: TypeSpecifier,
     pub name: String,
-    pub args: Vec<Var>,
     allocations: FxHashMap<String, Var>,
     avail_regs: FxHashSet<Register>,
     pub stack_offset: u16,
     pub max_stack_offset: u16,
     pub code: Vec<Block>,
+    pub prologue: Block,
     pub epologue: Block,
 }
 
@@ -94,7 +94,6 @@ impl FunctionContext {
 
     pub fn any_reg(&mut self) -> Option<Register> {
         [
-            Register::R1,
             Register::R2,
             Register::R3,
             Register::R4,
@@ -108,7 +107,41 @@ impl FunctionContext {
 
 #[inline]
 #[doc(hidden)]
-fn store_reg_to_reg_offset(addr_offset: u16, src: Register, block: &mut Block) {
+fn push_reg_to_stack(reg: Register, block: &mut Block) {
+    block.sequence.push(Instruction {
+        op: Opcode::Sub,
+        format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Stl,
+        format: InstrFormat::RRI(Register::SP, reg, Immediate::Linked(0)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Sth,
+        format: InstrFormat::RRI(Register::SP, reg, Immediate::Linked(1)),
+    });
+}
+
+#[inline]
+#[doc(hidden)]
+fn pop_reg_from_stack(reg: Register, block: &mut Block) {
+    block.sequence.push(Instruction {
+        op: Opcode::Ldl,
+        format: InstrFormat::RRI(reg, Register::SP, Immediate::Linked(0)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Ldh,
+        format: InstrFormat::RRI(reg, Register::SP, Immediate::Linked(1)),
+    });
+    block.sequence.push(Instruction {
+        op: Opcode::Add,
+        format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
+    });
+}
+
+#[inline]
+#[doc(hidden)]
+fn store_reg_to_fp_offset(addr_offset: u16, src: Register, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Stl,
         format: InstrFormat::RRI(Register::FP, src, Immediate::Linked(addr_offset)),
@@ -121,7 +154,7 @@ fn store_reg_to_reg_offset(addr_offset: u16, src: Register, block: &mut Block) {
 
 #[inline]
 #[doc(hidden)]
-fn load_reg_offset_to_reg(dest: Register, addr_offset: u16, block: &mut Block) {
+fn load_fp_offset_to_reg(dest: Register, addr_offset: u16, block: &mut Block) {
     block.sequence.push(Instruction {
         op: Opcode::Ldl,
         format: InstrFormat::RRI(dest, Register::FP, Immediate::Linked(addr_offset)),
@@ -160,14 +193,14 @@ impl CompilerState {
                             let tmp_reg = func.any_reg().unwrap();
                             {
                                 let block = func.last_block_mut();
-                                load_reg_offset_to_reg(tmp_reg, *src_off, block);
-                                store_reg_to_reg_offset(*dest_off, tmp_reg, block);
+                                load_fp_offset_to_reg(tmp_reg, *src_off, block);
+                                store_reg_to_fp_offset(*dest_off, tmp_reg, block);
                             }
                             func.take_back_reg(tmp_reg);
                         }
                         (VarStorage::Register(dest), VarStorage::StackOffset(src_off)) => {
                             let block = func.last_block_mut();
-                            load_reg_offset_to_reg(*dest, *src_off, block);
+                            load_fp_offset_to_reg(*dest, *src_off, block);
                         }
 
                         st => todo!("{:?}", st),
@@ -201,7 +234,7 @@ impl CompilerState {
                                     op: Opcode::Mov,
                                     format: InstrFormat::RI(tmp_reg, Immediate::Linked(val)),
                                 });
-                                store_reg_to_reg_offset(*addr_offset, tmp_reg, block);
+                                store_reg_to_fp_offset(*addr_offset, tmp_reg, block);
                             }
                             func.take_back_reg(tmp_reg);
                         }
@@ -213,6 +246,121 @@ impl CompilerState {
                     )));
                 }
             }
+            Expr::Postfix(post) => match &post.item {
+                PostfixExpr::Call(call) => {
+                    let CallExpr { func, args } = &call.item;
+                    let n_args = args.len() as u16;
+                    let args_stack_size = n_args * 2;
+
+                    for (i, arg_expr) in args.iter().enumerate() {
+                        let arg_reg = self
+                            .functions
+                            .get_mut(func_name)
+                            .unwrap()
+                            .any_reg()
+                            .unwrap();
+                        let arg = Var::new(
+                            TypeSpecifier::Int,
+                            &format!("arg{}", i),
+                            var::VarStorage::Register(arg_reg),
+                        );
+                        self.compile_expr(&arg_expr.item, Some(&arg), func_name)?;
+                        push_reg_to_stack(
+                            arg_reg,
+                            self.functions.get_mut(func_name).unwrap().last_block_mut(),
+                        );
+                        self.functions
+                            .get_mut(func_name)
+                            .unwrap()
+                            .take_back_reg(arg_reg);
+                    }
+                    let ret_addr_reg = self
+                        .functions
+                        .get_mut(func_name)
+                        .unwrap()
+                        .any_reg()
+                        .unwrap();
+                    let nblock = self.functions.get(func_name).unwrap().code.len();
+                    let ret_addr_label = format!("{func_name}{}retaddr{}", func.item.0, nblock);
+                    let ret_addr_block = Block::new(&ret_addr_label);
+                    {
+                        let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
+
+                        block.sequence.push(Instruction {
+                            op: Opcode::Mov,
+                            format: InstrFormat::RI(
+                                ret_addr_reg,
+                                Immediate::Unlinked(ret_addr_label.clone()),
+                            ),
+                        });
+                        push_reg_to_stack(ret_addr_reg, block);
+
+                        block.sequence.push(Instruction {
+                            op: Opcode::Jmp,
+                            format: InstrFormat::I(Immediate::Unlinked(func.item.0.to_owned())),
+                        });
+                    }
+                    self.functions
+                        .get_mut(func_name)
+                        .unwrap()
+                        .code
+                        .push(ret_addr_block);
+
+                    self.functions
+                        .get_mut(func_name)
+                        .unwrap()
+                        .last_block_mut()
+                        .sequence
+                        .push(Instruction {
+                            op: Opcode::Add,
+                            format: InstrFormat::RRI(
+                                Register::FP,
+                                Register::FP,
+                                Immediate::Linked(args_stack_size + 2),
+                            ),
+                        });
+                    if let Some(dest) = dest {
+                        match dest.storage() {
+                            VarStorage::Register(dest_reg) => {
+                                let block =
+                                    self.functions.get_mut(func_name).unwrap().last_block_mut();
+                                block.sequence.push(Instruction {
+                                    op: Opcode::Mov,
+                                    format: InstrFormat::RR(*dest_reg, Register::R1),
+                                });
+                            }
+                            VarStorage::StackOffset(dest_offset) => {
+                                let tmp_dest = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .any_reg()
+                                    .unwrap();
+                                {
+                                    let block =
+                                        self.functions.get_mut(func_name).unwrap().last_block_mut();
+                                    load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Mov,
+                                        format: InstrFormat::RR(tmp_dest, Register::R1),
+                                    });
+                                    store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                }
+                                self.functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .take_back_reg(tmp_dest);
+                            }
+                            VarStorage::Immediate(_) => {
+                                return Err(Error::from(CompError::InvalidExpression(
+                                    call.span.location_line() as usize,
+                                    call.first_line(),
+                                )))
+                            }
+                        }
+                    }
+                }
+            },
             Expr::Infix(infix) => {
                 let tmp_rhs_reg = self
                     .functions
@@ -282,7 +430,7 @@ impl CompilerState {
                                             .get_mut(func_name)
                                             .unwrap()
                                             .last_block_mut();
-                                        load_reg_offset_to_reg(tmp_dest, *dest_offset, block);
+                                        load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
                                         block.sequence.push(Instruction {
                                             op,
                                             format: InstrFormat::RRR(
@@ -291,7 +439,7 @@ impl CompilerState {
                                                 tmp_rhs_reg,
                                             ),
                                         });
-                                        store_reg_to_reg_offset(*dest_offset, tmp_dest, block);
+                                        store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
                                     }
                                     self.functions
                                         .get_mut(func_name)
@@ -420,12 +568,6 @@ impl CompilerState {
                                             )),
                                         });
                                         block.sequence.push(Instruction {
-                                            op: Opcode::Jz,
-                                            format: InstrFormat::I(Immediate::Unlinked(
-                                                true_block.label.clone(),
-                                            )),
-                                        });
-                                        block.sequence.push(Instruction {
                                             op: Opcode::Jmp,
                                             format: InstrFormat::I(Immediate::Unlinked(
                                                 true_block.label.clone(),
@@ -484,7 +626,7 @@ impl CompilerState {
                                 VarStorage::StackOffset(dest_offset) => {
                                     let block =
                                         self.functions.get_mut(func_name).unwrap().last_block_mut();
-                                    store_reg_to_reg_offset(*dest_offset, tmp_dest, block);
+                                    store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
                                 }
                                 VarStorage::Immediate(_) => {
                                     return Err(Error::from(CompError::InvalidExpression(
@@ -584,7 +726,7 @@ impl CompilerState {
                                                 .get_mut(func_name)
                                                 .unwrap()
                                                 .last_block_mut();
-                                            load_reg_offset_to_reg(tmp_dest, *dest_offset, block);
+                                            load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
                                             block.sequence.push(Instruction {
                                                 op,
                                                 format: InstrFormat::RRR(
@@ -593,7 +735,7 @@ impl CompilerState {
                                                     tmp_rhs_reg,
                                                 ),
                                             });
-                                            store_reg_to_reg_offset(*dest_offset, tmp_dest, block);
+                                            store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
                                         }
                                         VarStorage::Immediate(_) => {
                                             return Err(Error::from(CompError::InvalidExpression(
@@ -639,14 +781,6 @@ impl CompilerState {
                     );
                     self.compile_expr(expr, Some(&dest), func_name)?;
                 }
-                if func_name == "start" {
-                    // `start` is special, as we need to halt instead of returning
-                    let func = self.functions.get_mut(func_name).unwrap();
-                    func.epologue.sequence.push(Instruction {
-                        op: Opcode::Halt,
-                        format: InstrFormat::OpOnly,
-                    });
-                }
             }
         }
         Ok(())
@@ -673,7 +807,7 @@ impl CompilerState {
                     .unwrap();
                 let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
 
-                load_reg_offset_to_reg(tmp_dest, dest.get_stack_offset().unwrap(), block);
+                load_fp_offset_to_reg(tmp_dest, dest.get_stack_offset().unwrap(), block);
                 block.sequence.push(Instruction {
                     op: Opcode::Printi,
                     format: InstrFormat::R(tmp_dest),
@@ -719,7 +853,7 @@ impl CompilerState {
         {
             let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
             let cond_offset = cond.get_stack_offset().unwrap();
-            load_reg_offset_to_reg(tmp_cond, cond_offset, block);
+            load_fp_offset_to_reg(tmp_cond, cond_offset, block);
             block.sequence.push(Instruction {
                 op: Opcode::Sub,
                 format: InstrFormat::RRR(Register::R0, tmp_cond, Register::R0),
@@ -819,7 +953,7 @@ impl CompilerState {
         {
             let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
             let cond_offset = cond.get_stack_offset().unwrap();
-            load_reg_offset_to_reg(tmp_cond, cond_offset, block);
+            load_fp_offset_to_reg(tmp_cond, cond_offset, block);
             block.sequence.push(Instruction {
                 op: Opcode::Sub,
                 format: InstrFormat::RRR(Register::R0, tmp_cond, Register::R0),
@@ -919,13 +1053,11 @@ impl CompilerState {
         let func_name = func.id.item.id.item.0.to_owned();
         if !self.functions.contains_key(&func_name) {
             log::debug!("Compiling function: {func_name}");
-            let ctx = FunctionContext {
+            let mut ctx = FunctionContext {
                 return_type: func.id.item.typ.item,
                 name: func_name.clone(),
-                args: vec![],
                 allocations: FxHashMap::default(),
                 avail_regs: FxHashSet::from_iter([
-                    Register::R1,
                     Register::R2,
                     Register::R3,
                     Register::R4,
@@ -934,17 +1066,74 @@ impl CompilerState {
                 ]),
                 stack_offset: 0,
                 max_stack_offset: 0,
+                prologue: Block::new(&format!("{func_name}prologue")),
                 code: vec![Block::new(&format!("{func_name}outer"))],
                 epologue: Block::new(&format!("{func_name}epilogue")),
             };
-            for _arg in func.param_list.iter() {
-                // args.push(Ssa::new(arg.item.typ.item, arg.item.id.item.0));
-                todo!("function args")
+
+            ctx.prologue.sequence.push(Instruction {
+                op: Opcode::Add,
+                format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
+            });
+            for (i, arg) in func.param_list.iter().enumerate().rev() {
+                let var = ctx.push(arg.item.id.item.0, arg.item.typ.item);
+                pop_reg_from_stack(Register::R6, &mut ctx.prologue);
+                store_reg_to_fp_offset(
+                    var.get_stack_offset().unwrap(),
+                    Register::R6,
+                    &mut ctx.prologue,
+                );
             }
 
             self.functions.insert(func_name.clone(), ctx);
             for block_item in func.body.item.0.iter() {
                 self.compile_block_item(&block_item.item, &func_name)?;
+            }
+
+            let ctx = self.functions.get_mut(&func_name).unwrap();
+            ctx.prologue.sequence.insert(
+                0,
+                Instruction {
+                    op: Opcode::Sub,
+                    format: InstrFormat::RRI(
+                        Register::FP,
+                        Register::FP,
+                        Immediate::Linked(ctx.max_stack_offset),
+                    ),
+                },
+            );
+            ctx.prologue.sequence.push(Instruction {
+                op: Opcode::Mov,
+                format: InstrFormat::RR(Register::SP, Register::FP),
+            });
+
+            if func_name == "start" {
+                // `start` is special, as we need to halt instead of returning
+                ctx.epologue.sequence.push(Instruction {
+                    op: Opcode::Halt,
+                    format: InstrFormat::OpOnly,
+                });
+            } else {
+                ctx.epologue.sequence.push(Instruction {
+                    op: Opcode::Add,
+                    format: InstrFormat::RRI(
+                        Register::FP,
+                        Register::FP,
+                        Immediate::Linked(ctx.max_stack_offset),
+                    ),
+                });
+
+                let reg = ctx.any_reg().unwrap();
+                pop_reg_from_stack(reg, &mut ctx.epologue);
+                ctx.epologue.sequence.push(Instruction {
+                    op: Opcode::Mov,
+                    format: InstrFormat::RR(Register::SP, Register::FP),
+                });
+                ctx.epologue.sequence.push(Instruction {
+                    op: Opcode::Jmp,
+                    format: InstrFormat::R(reg),
+                });
+                ctx.take_back_reg(reg);
             }
         } else {
             return Err(Error::new(CompError::DuplicateSymbol(func_name)));
@@ -974,9 +1163,11 @@ impl CompilerState {
                 lines.push("    mov sp $0xf000".to_owned());
                 lines.push("    mov fp sp".to_owned());
             }
-            // lines.push("    push fp".to_owned());
-            lines.push(format!("    sub fp fp ${}", func.max_stack_offset));
-            lines.push("    mov sp fp".to_owned());
+
+            lines.push(format!("%{func_name}prologue"));
+            for instr in func.prologue.sequence.iter() {
+                lines.push(format!("    {}", instr));
+            }
 
             for block in func.code.iter() {
                 lines.push(format!("%{}", block.label));
@@ -985,11 +1176,8 @@ impl CompilerState {
                 }
             }
             lines.push(format!("%{func_name}epilogue"));
-            lines.push(format!("    add fp fp ${}", func.max_stack_offset));
-            lines.push("    mov sp fp".to_owned());
             for instr in func.epologue.sequence.iter() {
                 lines.push(format!("    {}", instr));
-                // }
             }
         }
         Ok(lines.join("\n"))
@@ -1056,23 +1244,4 @@ pub fn compile(program_text: &str) -> Result<String> {
 
     let mut state = CompilerState::default();
     state.compile(&tu.item)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compile() {
-        let program = r#"
-void start() {
-    int a = 0;
-    printi a;
-    a = 1;
-    printi a;
-    return;
-}"#;
-        let asm = compile(program).unwrap();
-        println!("{}", asm);
-    }
 }
