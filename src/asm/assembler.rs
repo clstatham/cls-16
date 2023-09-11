@@ -104,19 +104,19 @@ impl<'a, 'b> Instruction {
                                 } else {
                                     return Err(Error::from(AsmError::InvalidInstruction {
                                         loc: c.span.location_line() as usize,
-                                        span: c.span.fragment().lines().next().unwrap().to_string(),
+                                        span: c.first_line(),
                                     }));
                                 }
                             } else {
                                 return Err(Error::from(AsmError::InvalidInstruction {
                                     loc: b.span.location_line() as usize,
-                                    span: b.span.fragment().lines().next().unwrap().to_string(),
+                                    span: b.first_line(),
                                 }));
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -156,14 +156,14 @@ impl<'a, 'b> Instruction {
                                 _ => {
                                     return Err(Error::from(AsmError::InvalidInstruction {
                                         loc: b.span.location_line() as usize,
-                                        span: b.span.fragment().lines().next().unwrap().to_string(),
+                                        span: b.first_line(),
                                     }));
                                 }
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -189,13 +189,13 @@ impl<'a, 'b> Instruction {
                             } else {
                                 return Err(Error::from(AsmError::InvalidInstruction {
                                     loc: b.span.location_line() as usize,
-                                    span: b.span.fragment().lines().next().unwrap().to_string(),
+                                    span: b.first_line(),
                                 }));
                             }
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -210,7 +210,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -245,7 +245,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -285,7 +285,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -323,7 +323,7 @@ impl<'a, 'b> Instruction {
                         } else {
                             return Err(Error::from(AsmError::InvalidInstruction {
                                 loc: a.span.location_line() as usize,
-                                span: a.span.fragment().lines().next().unwrap().to_string(),
+                                span: a.first_line(),
                             }));
                         }
                     }
@@ -398,13 +398,7 @@ impl Assembler {
                 _tok => {
                     return Err(Error::from(AsmError::UnexpectedToken(
                         next_tok.span.location_line() as usize,
-                        next_tok
-                            .span
-                            .fragment()
-                            .split_whitespace()
-                            .next()
-                            .unwrap()
-                            .to_string(),
+                        next_tok.first_token(),
                     )))
                 }
             }

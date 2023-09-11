@@ -26,6 +26,10 @@ pub enum CompError {
     UnexpectedToken(usize, String),
     #[error("duplicate symbol found: {0}")]
     DuplicateSymbol(String),
+    #[error("on line {0}: invalid expression: {1}")]
+    InvalidExpression(usize, String),
+    #[error("on line {0}: invalid statement: {1}")]
+    InvalidStatement(usize, String),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

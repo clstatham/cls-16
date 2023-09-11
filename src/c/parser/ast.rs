@@ -43,6 +43,24 @@ pub enum InfixOp {
     LtEq,
     Gt,
     GtEq,
+    MulAssign,
+    DivAssign,
+    AddAssign,
+    SubAssign,
+    Mod,
+    ModAssign,
+    And,
+    Or,
+    Xor,
+    AndAssign,
+    OrAssign,
+    XorAssign,
+    AndAnd,
+    OrOr,
+    Shl,
+    Shr,
+    ShlAssign,
+    ShrAssign,
     // todo...
 }
 
@@ -129,6 +147,7 @@ pub struct InfixExpr<'a> {
 pub enum Precedence {
     Lowest,
     Equals,
+    Boolean,
     LessGreater,
     Sum,
     Product,

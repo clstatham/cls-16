@@ -18,6 +18,21 @@ pub struct WithSpan<'a, T> {
     pub item: T,
 }
 
+impl<'a, T> WithSpan<'a, T> {
+    pub fn first_token(&self) -> String {
+        self.span
+            .fragment()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    pub fn first_line(&self) -> String {
+        self.span.fragment().lines().next().unwrap().to_owned()
+    }
+}
+
 /// An error for the assembler module of CLS-16.
 #[derive(Debug, Error)]
 pub enum AsmError {

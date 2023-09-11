@@ -69,6 +69,41 @@ tag_impl_no_lt!(Constant);
 pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSpan<'a, InfixOp>>) {
     if let CToken::Punctuator(t) = inp.item {
         match t {
+            Punctuator::PlusEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::AddAssign,
+                }),
+            ),
+            Punctuator::StarEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::MulAssign,
+                }),
+            ),
+            Punctuator::MinusEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::SubAssign,
+                }),
+            ),
+            Punctuator::SlashEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::DivAssign,
+                }),
+            ),
+            Punctuator::PercentEq => (
+                Precedence::Equals,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::ModAssign,
+                }),
+            ),
             Punctuator::Equals => (
                 Precedence::Equals,
                 Some(WithSpan {
@@ -88,6 +123,20 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
                 Some(WithSpan {
                     span: inp.span,
                     item: InfixOp::NotEqual,
+                }),
+            ),
+            Punctuator::AndAnd => (
+                Precedence::Boolean,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::AndAnd,
+                }),
+            ),
+            Punctuator::BarBar => (
+                Precedence::Boolean,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::OrOr,
                 }),
             ),
             Punctuator::LtEq => (
@@ -146,6 +195,14 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
                     item: InfixOp::Div,
                 }),
             ),
+            Punctuator::Percent => (
+                Precedence::Product,
+                Some(WithSpan {
+                    span: inp.span,
+                    item: InfixOp::Mod,
+                }),
+            ),
+
             Punctuator::OParen => (Precedence::Call, None),
             Punctuator::OBrack => (Precedence::Index, None),
             _ => (Precedence::Lowest, None),
