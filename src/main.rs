@@ -27,6 +27,8 @@ struct CompileArgs {
     input: PathBuf,
     #[clap(short, long, help = "Emit assembly code instead of a binary")]
     emit_asm: bool,
+    #[clap(short = 'O', long, default_value = "0", help = "Optimization level")]
+    opt_level: u8,
 }
 
 #[derive(Parser)]
@@ -68,7 +70,7 @@ fn main() -> Result<()> {
     match args.command {
         Command::Compile(args) => {
             let c_program = std::fs::read_to_string(&args.input)?;
-            let program = compile(&c_program)?;
+            let program = compile(&c_program, args.opt_level)?;
             if args.emit_asm {
                 let output = args.input.with_extension("s");
                 std::fs::write(output, &program)?;

@@ -333,15 +333,24 @@ impl CompilerState {
                             | InfixOp::AndAssign
                             | InfixOp::OrAssign
                             | InfixOp::XorAssign => {
-                                // assigning to the deref of a pointer
-                                let rhs_reg = self
+                                // this holds the address of the pointer
+                                let dest_addr_reg = self
                                     .functions
                                     .get_mut(func_name)
                                     .unwrap()
                                     .any_reg()
                                     .unwrap();
-                                // this holds the address of the pointer
-                                let dest_addr_reg = self
+                                let dest_addr = Var::new(
+                                    TypeSpecifier::Int,
+                                    "dest_addr",
+                                    var::VarStorage::Register(dest_addr_reg),
+                                );
+                                self.compile_expr(
+                                    &infix.item.lhs.item,
+                                    Some(&dest_addr),
+                                    func_name,
+                                )?;
+                                let rhs_reg = self
                                     .functions
                                     .get_mut(func_name)
                                     .unwrap()
@@ -353,16 +362,7 @@ impl CompilerState {
                                     var::VarStorage::Register(rhs_reg),
                                 );
                                 self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
-                                let dest_addr = Var::new(
-                                    TypeSpecifier::Int,
-                                    "dest_addr",
-                                    var::VarStorage::Register(dest_addr_reg),
-                                );
-                                self.compile_expr(
-                                    &infix.item.lhs.item,
-                                    Some(&dest_addr),
-                                    func_name,
-                                )?;
+
                                 let func = self.functions.get_mut(func_name).unwrap();
                                 {
                                     let block = func.last_block_mut();
@@ -1301,11 +1301,228 @@ impl CompilerState {
         }
     }
 
-    pub fn compile(&mut self, ast: &TranslationUnit<'_>) -> Result<String> {
+    fn optimize_functions(&mut self) -> Result<()> {
+        // function-level optimizations
+        for (_, func) in self.functions.iter_mut() {
+            // register promotion
+            // if the function has spare registers, we can promote stack variables to registers
+            for reg in func.avail_regs.drain() {
+                for var in func.allocations.values_mut() {
+                    if let VarStorage::StackOffset(orig_offset) = var.storage() {
+                        let mut changed = true;
+                        while changed {
+                            changed = false;
+                            for block in func.code.iter_mut() {
+                                let mut i = 0;
+                                while i < block.sequence.len() {
+                                    let instr = &block.sequence[i];
+
+                                    if let Some(next) = block.sequence.get(i + 1) {
+                                        // replace all loads from the stack with loads from the register
+                                        // convert the following pattern:
+                                        // ldl r1, fp, X
+                                        // ldh r1, fp, Y
+                                        // into:
+                                        // mov r1, (reg)
+                                        if instr.op == Opcode::Ldl && next.op == Opcode::Ldh {
+                                            if let InstrFormat::RRI(
+                                                ldl_dest,
+                                                ldl_src,
+                                                ref ldl_offset,
+                                            ) = instr.format
+                                            {
+                                                if let InstrFormat::RRI(
+                                                    ldh_dest,
+                                                    ldh_src,
+                                                    ref ldh_offset,
+                                                ) = next.format
+                                                {
+                                                    if ldl_dest == ldh_dest
+                                                        && ldl_src == ldh_src
+                                                        && ldl_src == Register::FP
+                                                        && ldl_offset.get_linked().unwrap()
+                                                            == *orig_offset
+                                                    {
+                                                        block.sequence.remove(i + 1);
+                                                        block.sequence.remove(i);
+                                                        block.sequence.insert(
+                                                            i,
+                                                            Instruction {
+                                                                op: Opcode::Mov,
+                                                                format: InstrFormat::RR(
+                                                                    ldl_dest, reg,
+                                                                ),
+                                                            },
+                                                        );
+                                                        changed = true;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // replace all stores to the stack with stores to the register
+                                        // convert the following pattern:
+                                        // stl fp, r1, X
+                                        // sth fp, r1, Y
+                                        // into:
+                                        // mov (reg), r1
+                                        if instr.op == Opcode::Stl && next.op == Opcode::Sth {
+                                            if let InstrFormat::RRI(
+                                                stl_dest,
+                                                stl_src,
+                                                ref stl_offset,
+                                            ) = instr.format
+                                            {
+                                                if let InstrFormat::RRI(
+                                                    sth_dest,
+                                                    sth_src,
+                                                    ref sth_offset,
+                                                ) = next.format
+                                                {
+                                                    if stl_dest == sth_dest
+                                                        && stl_src == sth_src
+                                                        && stl_dest == Register::FP
+                                                        && stl_offset.get_linked().unwrap()
+                                                            == *orig_offset
+                                                    {
+                                                        block.sequence.remove(i + 1);
+                                                        block.sequence.remove(i);
+                                                        block.sequence.insert(
+                                                            i,
+                                                            Instruction {
+                                                                op: Opcode::Mov,
+                                                                format: InstrFormat::RR(
+                                                                    reg, stl_src,
+                                                                ),
+                                                            },
+                                                        );
+                                                        changed = true;
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    i += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    fn optimize_blocks(&mut self) -> Result<()> {
+        // block-level optimizations
+        for (_, func) in self.functions.iter_mut() {
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for block in func.code.iter_mut() {
+                    let mut i = 0;
+                    while i < block.sequence.len() {
+                        let instr = &block.sequence[i];
+                        // redundant mov
+                        // transform the pattern:
+                        // mov r1, r2
+                        // mov r2, r1
+                        // into:
+                        // mov r1, r2
+                        if let Some(next) = block.sequence.get(i + 1) {
+                            if instr.op == Opcode::Mov && next.op == Opcode::Mov {
+                                if let InstrFormat::RR(dest, src) = instr.format {
+                                    if let InstrFormat::RR(next_dest, next_src) = next.format {
+                                        if dest == next_src && src == next_dest {
+                                            block.sequence.remove(i + 1);
+                                            changed = true;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // redundant load
+                        // transform the pattern:
+                        // stl r1, r2, X
+                        // sth r1, r2, Y
+                        // ldl r2, r1, X
+                        // ldh r2, r1, Y
+                        // into:
+                        // stl r1, r2, X
+                        // sth r1, r2, Y
+                        if let Some(sth) = block.sequence.get(i + 1) {
+                            if let Some(ldl) = block.sequence.get(i + 2) {
+                                if let Some(ldh) = block.sequence.get(i + 3) {
+                                    if instr.op == Opcode::Stl
+                                        && sth.op == Opcode::Sth
+                                        && ldl.op == Opcode::Ldl
+                                        && ldh.op == Opcode::Ldh
+                                    {
+                                        if let InstrFormat::RRI(stl_dest, stl_src, ref stl_offset) =
+                                            instr.format
+                                        {
+                                            if let InstrFormat::RRI(
+                                                sth_dest,
+                                                sth_src,
+                                                ref sth_offset,
+                                            ) = sth.format
+                                            {
+                                                if let InstrFormat::RRI(
+                                                    ldl_dest,
+                                                    ldl_src,
+                                                    ref ldl_offset,
+                                                ) = ldl.format
+                                                {
+                                                    if let InstrFormat::RRI(
+                                                        ldh_dest,
+                                                        ldh_src,
+                                                        ref ldh_offset,
+                                                    ) = ldh.format
+                                                    {
+                                                        if stl_dest == sth_dest
+                                                            && stl_dest == ldl_src
+                                                            && stl_dest == ldh_src
+                                                            && stl_src == sth_src
+                                                            && stl_src == ldl_dest
+                                                            && stl_src == ldh_dest
+                                                            && stl_offset == ldl_offset
+                                                            && sth_offset == ldh_offset
+                                                        {
+                                                            block.sequence.remove(i + 3);
+                                                            block.sequence.remove(i + 2);
+                                                            changed = true;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        i += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn compile(&mut self, ast: &TranslationUnit<'_>, optimization_level: u8) -> Result<String> {
         for external in ast.0.iter() {
             self.compile_external_declaration(&external.item)
                 .context("compiling translation unit")?;
         }
+        if optimization_level >= 1 {
+            self.optimize_blocks()?;
+        }
+        // broken currently
+        // if optimization_level >= 2 {
+        //     self.optimize_functions()?;
+        // }
         let mut lines = vec![];
         for (func_name, func) in self.functions.iter() {
             lines.push(format!("%{func_name}"));
@@ -1335,7 +1552,7 @@ impl CompilerState {
     }
 }
 
-pub fn compile(program_text: &str) -> Result<String> {
+pub fn compile(program_text: &str, optimization_level: u8) -> Result<String> {
     let span = Span::new_extra(program_text, "");
     let (garbage, tokens) = lex_tokens(span).map_err(|e| {
         let span = match e {
@@ -1394,5 +1611,5 @@ pub fn compile(program_text: &str) -> Result<String> {
     }
 
     let mut state = CompilerState::default();
-    state.compile(&tu.item)
+    state.compile(&tu.item, optimization_level)
 }
