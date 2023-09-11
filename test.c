@@ -1,7 +1,7 @@
 void start() {
   int i = 42;
-  int *p = 4096;
-  *p = i;
+  int *p = &i;
+  printi p;
   printi *p;
   return;
 }

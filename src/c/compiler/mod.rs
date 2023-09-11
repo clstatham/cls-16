@@ -248,10 +248,95 @@ impl CompilerState {
             }
             Expr::Unary(unary) => {
                 if let Some(dest) = dest {
-                    self.compile_expr(&unary.item.expr.item, Some(dest), func_name)?;
                     match unary.item.op.item {
-                        UnaryOp::AddrOf => todo!(),
+                        UnaryOp::AddrOf => {
+                            if let Expr::Ident(name) = unary.item.expr.item {
+                                let src = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .get(name.item.0)
+                                    .unwrap();
+                                if let VarStorage::StackOffset(src_offset) = src.storage() {
+                                    match dest.storage() {
+                                        VarStorage::Register(dest_reg) => {
+                                            let block = self
+                                                .functions
+                                                .get_mut(func_name)
+                                                .unwrap()
+                                                .last_block_mut();
+                                            block.sequence.push(Instruction {
+                                                op: Opcode::Mov,
+                                                format: InstrFormat::RR(*dest_reg, Register::FP),
+                                            });
+                                            block.sequence.push(Instruction {
+                                                op: Opcode::Add,
+                                                format: InstrFormat::RRI(
+                                                    *dest_reg,
+                                                    *dest_reg,
+                                                    Immediate::Linked(*src_offset),
+                                                ),
+                                            });
+                                        }
+                                        VarStorage::StackOffset(dest_offset) => {
+                                            let tmp_dest = self
+                                                .functions
+                                                .get_mut(func_name)
+                                                .unwrap()
+                                                .any_reg()
+                                                .unwrap();
+                                            {
+                                                let block = self
+                                                    .functions
+                                                    .get_mut(func_name)
+                                                    .unwrap()
+                                                    .last_block_mut();
+                                                load_fp_offset_to_reg(
+                                                    tmp_dest,
+                                                    *dest_offset,
+                                                    block,
+                                                );
+                                                block.sequence.push(Instruction {
+                                                    op: Opcode::Mov,
+                                                    format: InstrFormat::RR(tmp_dest, Register::FP),
+                                                });
+                                                block.sequence.push(Instruction {
+                                                    op: Opcode::Add,
+                                                    format: InstrFormat::RRI(
+                                                        tmp_dest,
+                                                        tmp_dest,
+                                                        Immediate::Linked(*src_offset),
+                                                    ),
+                                                });
+                                                store_reg_to_fp_offset(
+                                                    *dest_offset,
+                                                    tmp_dest,
+                                                    block,
+                                                );
+                                            }
+                                        }
+                                        VarStorage::Immediate(_) => {
+                                            return Err(Error::from(CompError::InvalidExpression(
+                                                unary.span.location_line() as usize,
+                                                unary.first_line(),
+                                            )))
+                                        }
+                                    }
+                                } else {
+                                    return Err(Error::from(CompError::InvalidExpression(
+                                        unary.span.location_line() as usize,
+                                        unary.first_line(),
+                                    )));
+                                }
+                            } else {
+                                return Err(Error::from(CompError::InvalidExpression(
+                                    unary.span.location_line() as usize,
+                                    unary.first_line(),
+                                )));
+                            }
+                        }
                         UnaryOp::Deref => {
+                            self.compile_expr(&unary.item.expr.item, Some(dest), func_name)?;
                             let func = self.functions.get_mut(func_name).unwrap();
                             let tmp_reg = func.any_reg().unwrap();
 
@@ -979,7 +1064,7 @@ impl CompilerState {
         Ok(())
     }
 
-    fn compile_selection_statemtnt(
+    fn compile_selection_statement(
         &mut self,
         stmt: &SelectionStatement<'_>,
         func_name: &str,
@@ -1174,7 +1259,7 @@ impl CompilerState {
                 Ok(())
             }
             Statement::Selection(stmt) => self
-                .compile_selection_statemtnt(&stmt.item, func_name)
+                .compile_selection_statement(&stmt.item, func_name)
                 .context("compiling statement"),
             Statement::Iteration(stmt) => self
                 .compile_iteration_statement(&stmt.item, func_name)
@@ -1413,6 +1498,7 @@ impl CompilerState {
         }
         Ok(())
     }
+
     fn optimize_blocks(&mut self) -> Result<()> {
         // block-level optimizations
         for (_, func) in self.functions.iter_mut() {
@@ -1516,13 +1602,14 @@ impl CompilerState {
             self.compile_external_declaration(&external.item)
                 .context("compiling translation unit")?;
         }
-        if optimization_level >= 1 {
-            self.optimize_blocks()?;
-        }
         // broken currently
         // if optimization_level >= 2 {
         //     self.optimize_functions()?;
         // }
+        if optimization_level >= 1 {
+            self.optimize_blocks()?;
+        }
+
         let mut lines = vec![];
         for (func_name, func) in self.functions.iter() {
             lines.push(format!("%{func_name}"));
