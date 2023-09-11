@@ -52,7 +52,7 @@ impl Var {
 
     /// This [`Var`]'s expected C type.
     pub fn typ(&self) -> TypeSpecifier {
-        self.inner.typ
+        self.inner.typ.clone()
     }
 
     /// This [`Var`]'s "physical" representation inside the CLS-16 CPU, for example a register or a location on the stack.

@@ -214,17 +214,32 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
 
 impl TypeSpecifier {
     pub fn parse(inp: Tokens<'_>) -> IResult<Tokens<'_>, WithSpan<Self>> {
-        alt((
-            map(kw_void, |s| s.first_into(TypeSpecifier::Void)),
-            map(kw_char, |s| s.first_into(TypeSpecifier::Char)),
-            map(kw_short, |s| s.first_into(TypeSpecifier::Short)),
-            map(kw_int, |s| s.first_into(TypeSpecifier::Int)),
-            map(kw_long, |s| s.first_into(TypeSpecifier::Long)),
-            // map(Ident::parse, |s| WithSpan {
-            //     span: s.span,
-            //     item: TypeSpecifier::TypedefName(s.item),
-            // }),
-        ))(inp)
+        map(
+            tuple((
+                alt((
+                    map(kw_void, |s| s.first_into(TypeSpecifier::Void)),
+                    map(kw_char, |s| s.first_into(TypeSpecifier::Char)),
+                    map(kw_short, |s| s.first_into(TypeSpecifier::Short)),
+                    map(kw_int, |s| s.first_into(TypeSpecifier::Int)),
+                    map(kw_long, |s| s.first_into(TypeSpecifier::Long)),
+                    // map(Ident::parse, |s| WithSpan {
+                    //     span: s.span,
+                    //     item: TypeSpecifier::TypedefName(s.item),
+                    // }),
+                )),
+                opt(punc_star),
+            )),
+            |(typ, is_pointer)| {
+                if is_pointer.is_some() {
+                    WithSpan {
+                        span: typ.span,
+                        item: TypeSpecifier::Pointer(Box::new(typ.item)),
+                    }
+                } else {
+                    typ
+                }
+            },
+        )(inp)
     }
 }
 
@@ -267,8 +282,36 @@ impl<'a> PostfixExpr<'a> {
     }
 }
 
+impl UnaryOp {
+    pub fn parse(inp: Tokens<'_>) -> IResult<Tokens<'_>, WithSpan<Self>> {
+        alt((
+            map(punc_plus, |s| s.first_into(UnaryOp::Plus)),
+            map(punc_minus, |s| s.first_into(UnaryOp::Minus)),
+            map(punc_bang, |s| s.first_into(UnaryOp::Not)),
+            map(punc_star, |s| s.first_into(UnaryOp::Deref)),
+            map(punc_ampersand, |s| s.first_into(UnaryOp::AddrOf)),
+            map(punc_tilde, |s| s.first_into(UnaryOp::Tilde)),
+        ))(inp)
+    }
+}
+
+impl<'a> UnaryExpr<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        map(tuple((UnaryOp::parse, Expr::parse)), |(op, expr)| {
+            WithSpan {
+                span: op.span,
+                item: UnaryExpr { op, expr },
+            }
+        })(inp)
+    }
+}
+
 pub fn parse_atom_expr(inp: Tokens) -> IResult<Tokens, WithSpan<Expr>> {
     alt((
+        map(UnaryExpr::parse, |unary| WithSpan {
+            span: unary.span,
+            item: Expr::Unary(Box::new(unary)),
+        }),
         map(PostfixExpr::parse, |post| WithSpan {
             span: post.span,
             item: Expr::Postfix(Box::new(post)),

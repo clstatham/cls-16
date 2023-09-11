@@ -176,7 +176,7 @@ impl CompilerState {
             .functions
             .get_mut(func_name)
             .unwrap()
-            .push(decl.id.item.id.item.0, decl.id.item.typ.item);
+            .push(decl.id.item.id.item.0, decl.id.item.typ.item.clone());
         self.compile_expr(&decl.expr.item, Some(&dest), func_name)?;
         Ok(())
     }
@@ -243,6 +243,157 @@ impl CompilerState {
                     return Err(Error::from(CompError::InvalidExpression(
                         val.span.location_line() as usize,
                         val.first_line(),
+                    )));
+                }
+            }
+            Expr::Unary(unary) => {
+                if let Some(dest) = dest {
+                    self.compile_expr(&unary.item.expr.item, Some(dest), func_name)?;
+                    match unary.item.op.item {
+                        UnaryOp::AddrOf => todo!(),
+                        UnaryOp::Deref => {
+                            let func = self.functions.get_mut(func_name).unwrap();
+                            let tmp_reg = func.any_reg().unwrap();
+
+                            match dest.storage() {
+                                VarStorage::Register(dest_reg) => {
+                                    let block = func.last_block_mut();
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Ldl,
+                                        format: InstrFormat::RRI(
+                                            tmp_reg,
+                                            *dest_reg,
+                                            Immediate::Linked(0),
+                                        ),
+                                    });
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Ldh,
+                                        format: InstrFormat::RRI(
+                                            tmp_reg,
+                                            *dest_reg,
+                                            Immediate::Linked(1),
+                                        ),
+                                    });
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Mov,
+                                        format: InstrFormat::RR(*dest_reg, tmp_reg),
+                                    });
+                                }
+                                VarStorage::StackOffset(dest_offset) => {
+                                    let tmp_dest = func.any_reg().unwrap();
+                                    {
+                                        let block = func.last_block_mut();
+                                        load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                                        block.sequence.push(Instruction {
+                                            op: Opcode::Ldl,
+                                            format: InstrFormat::RRI(
+                                                tmp_reg,
+                                                tmp_dest,
+                                                Immediate::Linked(0),
+                                            ),
+                                        });
+                                        block.sequence.push(Instruction {
+                                            op: Opcode::Ldh,
+                                            format: InstrFormat::RRI(
+                                                tmp_reg,
+                                                tmp_dest,
+                                                Immediate::Linked(1),
+                                            ),
+                                        });
+                                        block.sequence.push(Instruction {
+                                            op: Opcode::Mov,
+                                            format: InstrFormat::RR(tmp_dest, tmp_reg),
+                                        });
+                                        store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                    }
+                                    func.take_back_reg(tmp_dest);
+                                }
+                                VarStorage::Immediate(_) => {
+                                    return Err(Error::from(CompError::InvalidExpression(
+                                        unary.span.location_line() as usize,
+                                        unary.first_line(),
+                                    )))
+                                }
+                            }
+                            func.take_back_reg(tmp_reg);
+                        }
+                        UnaryOp::Plus => todo!(),
+                        UnaryOp::Minus => todo!(),
+                        UnaryOp::Tilde => todo!(),
+                        UnaryOp::Not => todo!(),
+                    }
+                } else if let UnaryOp::Deref = unary.item.op.item {
+                    match &unary.item.expr.item {
+                        Expr::Infix(infix) => match infix.item.op.item {
+                            InfixOp::Assign
+                            | InfixOp::MulAssign
+                            | InfixOp::AddAssign
+                            | InfixOp::SubAssign
+                            | InfixOp::DivAssign
+                            | InfixOp::AndAssign
+                            | InfixOp::OrAssign
+                            | InfixOp::XorAssign => {
+                                // assigning to the deref of a pointer
+                                let rhs_reg = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .any_reg()
+                                    .unwrap();
+                                // this holds the address of the pointer
+                                let dest_addr_reg = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .any_reg()
+                                    .unwrap();
+                                let rhs = Var::new(
+                                    TypeSpecifier::Int,
+                                    "rhs",
+                                    var::VarStorage::Register(rhs_reg),
+                                );
+                                self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
+                                let dest_addr = Var::new(
+                                    TypeSpecifier::Int,
+                                    "dest_addr",
+                                    var::VarStorage::Register(dest_addr_reg),
+                                );
+                                self.compile_expr(
+                                    &infix.item.lhs.item,
+                                    Some(&dest_addr),
+                                    func_name,
+                                )?;
+                                let func = self.functions.get_mut(func_name).unwrap();
+                                {
+                                    let block = func.last_block_mut();
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Stl,
+                                        format: InstrFormat::RRI(
+                                            dest_addr_reg,
+                                            rhs_reg,
+                                            Immediate::Linked(0),
+                                        ),
+                                    });
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Sth,
+                                        format: InstrFormat::RRI(
+                                            dest_addr_reg,
+                                            rhs_reg,
+                                            Immediate::Linked(1),
+                                        ),
+                                    });
+                                }
+                                func.take_back_reg(rhs_reg);
+                                func.take_back_reg(dest_addr_reg);
+                            }
+                            _ => todo!(),
+                        },
+                        _ => unreachable!(),
+                    }
+                } else {
+                    return Err(Error::from(CompError::InvalidExpression(
+                        unary.span.location_line() as usize,
+                        unary.first_line(),
                     )));
                 }
             }
@@ -775,7 +926,7 @@ impl CompilerState {
             JumpStatement::Return(value) => {
                 if let Some(expr) = value.as_ref().map(|v| &v.item) {
                     let dest = Var::new(
-                        self.functions.get(func_name).unwrap().return_type,
+                        self.functions.get(func_name).unwrap().return_type.clone(),
                         "returnval",
                         var::VarStorage::Register(Register::R1),
                     );
@@ -1054,7 +1205,7 @@ impl CompilerState {
         if !self.functions.contains_key(&func_name) {
             log::debug!("Compiling function: {func_name}");
             let mut ctx = FunctionContext {
-                return_type: func.id.item.typ.item,
+                return_type: func.id.item.typ.item.clone(),
                 name: func_name.clone(),
                 allocations: FxHashMap::default(),
                 avail_regs: FxHashSet::from_iter([
@@ -1075,8 +1226,8 @@ impl CompilerState {
                 op: Opcode::Add,
                 format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
             });
-            for (i, arg) in func.param_list.iter().enumerate().rev() {
-                let var = ctx.push(arg.item.id.item.0, arg.item.typ.item);
+            for arg in func.param_list.iter().rev() {
+                let var = ctx.push(arg.item.id.item.0, arg.item.typ.item.clone());
                 pop_reg_from_stack(Register::R6, &mut ctx.prologue);
                 store_reg_to_fp_offset(
                     var.get_stack_offset().unwrap(),

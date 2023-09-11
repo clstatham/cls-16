@@ -18,8 +18,9 @@ pub enum Constant {
     // Character(char),
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TypeSpecifier {
+    Pointer(Box<TypeSpecifier>),
     Void,
     Char,
     Short,
@@ -61,7 +62,16 @@ pub enum InfixOp {
     Shr,
     ShlAssign,
     ShrAssign,
-    // todo...
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum UnaryOp {
+    AddrOf,
+    Deref,
+    Plus,
+    Minus,
+    Tilde,
+    Not,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -130,7 +140,7 @@ pub enum Statement<'a> {
     Expr(WithSpan<'a, Expr<'a>>),
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TypedIdent<'a> {
     pub typ: WithSpan<'a, TypeSpecifier>,
     pub id: WithSpan<'a, Ident<'a>>,
@@ -155,6 +165,12 @@ pub enum PostfixExpr<'a> {
     // Index(WithSpan<'a, IndexExpr<'a>>),
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct UnaryExpr<'a> {
+    pub op: WithSpan<'a, UnaryOp>,
+    pub expr: WithSpan<'a, Expr<'a>>,
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
 pub enum Precedence {
     Lowest,
@@ -173,6 +189,7 @@ pub enum Expr<'a> {
     Constant(WithSpan<'a, Constant>),
     Infix(Box<WithSpan<'a, InfixExpr<'a>>>),
     Postfix(Box<WithSpan<'a, PostfixExpr<'a>>>),
+    Unary(Box<WithSpan<'a, UnaryExpr<'a>>>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
