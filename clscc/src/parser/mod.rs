@@ -2,7 +2,7 @@ use nom::{
     branch::*,
     bytes::complete::*,
     combinator::*,
-    multi::{many0, many1},
+    multi::{many0, many1, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
     Err, Finish, IResult,
 };
@@ -15,8 +15,6 @@ use self::gen::*;
 
 #[derive(Debug, Error)]
 pub enum ParseErrorKind {
-    #[error("Unexpected EOF")]
-    UnexpectedEof,
     #[error("Extra tokens")]
     ExtraTokens,
     #[error("NomError: {0}")]
@@ -24,7 +22,7 @@ pub enum ParseErrorKind {
 }
 
 #[derive(Debug, Error)]
-#[error("\nParseError at {line_num}:{col_num}: '{string_repr}': {source}\n{line}\n")]
+#[error("\nParseError at {line_num}:{col_num}: '{string_repr}': {source}\n{line}")]
 pub struct ParseError {
     pub line_num: usize,
     pub col_num: usize,
@@ -62,7 +60,7 @@ pub enum Type<'a> {
     Enum(&'a str),
     Typedef(&'a str),
     Pointer(Box<Type<'a>>),
-    Array(Box<Type<'a>>, usize),
+    Array(Box<Type<'a>>, Box<AstNode<'a>>),
     Function(Box<Type<'a>>, Vec<Type<'a>>),
 }
 
@@ -76,6 +74,9 @@ pub struct AstNode<'a> {
 }
 
 impl<'a> AstNode<'a> {
+    /// Creates a new AstNode with the given Ast and Type.
+    ///
+    /// The node will be assummed to be an lvalue, meaning that its result will be kept after the node is translated to assembly.
     pub fn new(ast: Ast<'a>, typ: Option<Type<'a>>) -> Self {
         Self {
             ast: Box::new(ast),
@@ -84,6 +85,9 @@ impl<'a> AstNode<'a> {
         }
     }
 
+    /// Creates a new AstNode with the given Ast and Type.
+    ///
+    /// The node will be assummed to be an rvalue, meaning that its result will be discarded after the node is translated to assembly.
     pub fn new_rvalue(ast: Ast<'a>, typ: Option<Type<'a>>) -> Self {
         Self {
             ast: Box::new(ast),
@@ -99,8 +103,8 @@ pub enum Ast<'a> {
     // Leaf nodes
     Token(Token<'a>),
     Ident(Token<'a>),
-    Integer(Token<'a>),
-    StringLiteral(Token<'a>),
+    Integer(i64),
+    StringLiteral(String),
     // Basic AST nodes
     Pointer(AstNode<'a>),
     // Compound AST nodes
@@ -178,7 +182,6 @@ impl<'a> AstNode<'a> {
             ))
         })?;
         if !inp.tok.is_empty() {
-            dbg!(res);
             Err(Error::from(ParseError::new(
                 inp.peek().unwrap(),
                 ParseErrorKind::ExtraTokens,
@@ -235,10 +238,11 @@ impl<'a> AstNode<'a> {
                 .unwrap_or(false)
         })(inp)?;
         log::trace!("Out Ast::parse_constant");
-        Ok((
-            inp,
-            AstNode::new_rvalue(Ast::Integer(t.tok[0].clone()), Some(Type::Int)),
-        ))
+        if let TokenVariant::Integer(val) = t.tok[0].variant {
+            Ok((inp, AstNode::new_rvalue(Ast::Integer(val), Some(Type::Int))))
+        } else {
+            unreachable!()
+        }
     }
 
     fn parse_string_literal(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
@@ -248,17 +252,18 @@ impl<'a> AstNode<'a> {
                 .unwrap_or(false)
         })(inp)?;
         log::trace!("Out Ast::parse_string_literal");
-        Ok((
-            inp,
-            AstNode::new_rvalue(
-                Ast::StringLiteral(t.tok[0].clone()),
-                // todo: +1 for \0 ?
-                Some(Type::Array(
-                    Box::new(Type::Char),
-                    t.tok[0].string_repr.len(),
-                )),
-            ),
-        ))
+        if let TokenVariant::String(s) = &t.tok[0].variant {
+            let len = AstNode::new_rvalue(Ast::Integer(s.len() as i64), Some(Type::Int));
+            Ok((
+                inp,
+                AstNode::new_rvalue(
+                    Ast::StringLiteral(s.to_owned()),
+                    Some(Type::Array(Box::new(Type::Char), Box::new(len))),
+                ),
+            ))
+        } else {
+            unreachable!()
+        }
     }
 
     fn parse_primary_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
@@ -676,14 +681,14 @@ impl<'a> AstNode<'a> {
 
     fn parse_declaration(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, ty) = Self::parse_declaration_specifiers(inp)?;
-        let (inp, decl) = Self::parse_init_declarator_list(inp)?;
+        let (inp, decl) = Self::parse_init_declarator_list(inp, &ty)?;
         let (inp, _) = punc_semicolon(inp)?;
         log::trace!("Out Ast::parse_declaration");
         Ok((inp, AstNode::new(Ast::Declaration { ty, decl }, None)))
     }
 
     fn parse_declaration_specifiers(inp: Tokens<'a>) -> IResult<Tokens<'a>, Vec<Self>> {
-        let (inp, ty) = many1(alt((
+        let (inp, mut ty) = many1(alt((
             kw_void,
             kw_char,
             kw_short,
@@ -698,41 +703,96 @@ impl<'a> AstNode<'a> {
             kw_enum,
             // Self::parse_typedef_name,
         )))(inp)?;
+        for t in ty.iter_mut() {
+            match *t.ast {
+                Ast::Token(Token {
+                    variant: TokenVariant::Keyword(kw),
+                    ..
+                }) => {
+                    t.typ = Some(match kw {
+                        Keyword::Void => Type::Void,
+                        Keyword::Char => Type::Char,
+                        Keyword::Short => Type::Short,
+                        Keyword::Int => Type::Int,
+                        Keyword::Long => Type::Long,
+                        Keyword::Float => Type::Float,
+                        Keyword::Double => Type::Double,
+                        Keyword::Signed => Type::Signed,
+                        Keyword::Unsigned => Type::Unsigned,
+                        Keyword::Struct => Type::Struct(""),
+                        Keyword::Union => Type::Union(""),
+                        Keyword::Enum => Type::Enum(""),
+                        _ => unreachable!(),
+                    });
+                }
+                _ => unreachable!(),
+            };
+        }
         log::trace!("Out Ast::parse_declaration_specifiers");
         Ok((inp, ty))
     }
 
-    fn parse_init_declarator_list(inp: Tokens<'a>) -> IResult<Tokens<'a>, Vec<Self>> {
-        let (inp, decl) = Self::parse_init_declarator(inp)?;
-        let (inp, decls) = many0(tuple((punc_comma, Self::parse_init_declarator)))(inp)?;
-        let decls = decls.into_iter().fold(vec![decl], |mut decls, (_, decl)| {
-            decls.push(decl);
-            decls
-        });
+    fn parse_init_declarator_list(
+        inp: Tokens<'a>,
+        ty: &[AstNode<'a>],
+    ) -> IResult<Tokens<'a>, Vec<Self>> {
+        let mut decls = vec![];
+        let (mut inp, decl) = Self::parse_init_declarator(inp, &ty[0])?;
+        decls.push(decl);
+        let mut more = true;
+        while more {
+            more = false;
+            if let Ok((inp2, _)) = punc_comma(inp.to_owned()) {
+                more = true;
+                inp = inp2;
+                let (inp2, decl) = Self::parse_init_declarator(inp, &ty[0])?;
+                decls.push(decl);
+                inp = inp2;
+            }
+        }
         log::trace!("Out Ast::parse_init_declarator_list");
         Ok((inp, decls))
     }
 
-    fn parse_init_declarator(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
-        let (inp, decl) = Self::parse_declarator(inp)?;
+    fn parse_init_declarator(inp: Tokens<'a>, ty: &AstNode<'a>) -> IResult<Tokens<'a>, Self> {
+        let (inp, decl) = Self::parse_declarator(inp, ty)?;
         let (inp, init) = opt(preceded(punc_equals, Self::parse_initializer))(inp)?;
         log::trace!("Out Ast::parse_init_declarator");
         Ok((inp, decl))
     }
 
-    fn parse_declarator(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
+    fn parse_declarator(inp: Tokens<'a>, ty: &AstNode<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, ptr) = many0(punc_star)(inp)?;
-        let (inp, decl) = Self::parse_direct_declarator(inp)?;
-        let mut decl = decl;
+        let (inp, mut decl) = Self::parse_direct_declarator(inp, ty)?;
+        decl.typ = ty.typ.to_owned();
+        let (inp, mut decl) = if let Ok((inp, _)) = punc_obrack(inp.to_owned()) {
+            let (inp, len) = Self::parse_expr(inp)?;
+            let (inp, _) = punc_cbrack(inp)?;
+            decl.typ = Some(Type::Array(
+                Box::new(decl.typ.as_ref().unwrap().to_owned()),
+                Box::new(len),
+            ));
+            (inp, decl)
+        } else {
+            (inp, decl)
+        };
         for _ in ptr {
-            decl.typ = Some(Type::Pointer(Box::new(decl.typ.unwrap())));
+            decl.typ = Some(Type::Pointer(Box::new(
+                decl.typ.as_ref().unwrap().to_owned(),
+            )));
         }
         log::trace!("Out Ast::parse_declarator");
         Ok((inp, decl))
     }
 
-    fn parse_direct_declarator(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
-        alt((map(Self::parse_ident, |ident| ident),))(inp)
+    fn parse_direct_declarator(inp: Tokens<'a>, ty: &AstNode<'a>) -> IResult<Tokens<'a>, Self> {
+        alt((
+            map(
+                tuple((punc_oparen, |t| Self::parse_declarator(t, ty), punc_cparen)),
+                |(_, decl, _)| decl,
+            ),
+            Self::parse_ident,
+        ))(inp)
     }
 
     fn parse_initializer(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {

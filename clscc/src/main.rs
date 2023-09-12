@@ -7,7 +7,7 @@ pub mod parser;
 fn main() {
     simplelog::TermLogger::init(
         #[cfg(debug_assertions)]
-        simplelog::LevelFilter::Debug,
+        simplelog::LevelFilter::Trace,
         #[cfg(not(debug_assertions))]
         simplelog::LevelFilter::Info,
         simplelog::Config::default(),
@@ -17,8 +17,8 @@ fn main() {
     .unwrap();
     let inp = r#"
 void start() {
+    int a[10];
     int i, j;
-    i = 0;
     return;
 }
     "#;
