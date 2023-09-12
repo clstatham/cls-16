@@ -21,7 +21,7 @@ impl Codegen {
     }
 
     fn cga_arith(&mut self, lhs: Value, rhs: Value, op: Opcode) -> Result<Value> {
-        let result = self.current_scope.any_register()?;
+        let result = self.current_scope.any_register(lhs.ty().cloned())?;
         match (lhs.storage(), rhs.storage()) {
             (ValueStorage::Register(lhs), ValueStorage::Register(rhs)) => {
                 self.current_scope.push_instr(Instruction {
@@ -84,7 +84,7 @@ impl Codegen {
                 Ok(result)
             }
             (ValueStorage::Stack(lhs_offset), ValueStorage::Stack(rhs_offset)) => {
-                let tmp_rhs = self.current_scope.any_register()?;
+                let tmp_rhs = self.current_scope.any_register(lhs.ty().cloned())?;
                 self.current_scope.push_instr(Instruction {
                     op: Opcode::Ldl,
                     format: InstrFormat::RRI(

@@ -1,9 +1,9 @@
 use anyhow::{Error, Result};
 
 use crate::clscc::{
-    cg::{Codegen, CodegenError, CodegenErrorKind, Value},
+    cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage},
     common::{Punctuator, TokenVariant},
-    parser::{Ast, AstNode},
+    parser::{Ast, AstNode, Type},
 };
 
 impl Codegen {
@@ -13,17 +13,27 @@ impl Codegen {
         lhs: &mut AstNode<'_>,
         rhs: &mut AstNode<'_>,
     ) -> Result<Option<Value>> {
-        assert!(!lhs.rvalue, "parser incorrectly marked lhs as rvalue");
-        assert!(rhs.rvalue, "parser incorrectly marked rhs as lvalue");
-        let rhs = self.dfs_walk(rhs)?.unwrap();
-        let lhs = self.dfs_walk(lhs)?.unwrap();
+        // assert!(!lhs.rvalue, "parser incorrectly marked lhs as rvalue");
+        // lhs.rvalue = false;
+        // rhs.rvalue = true;
+        // assert!(rhs.rvalue, "parser incorrectly marked rhs as lvalue");
+        let lhs = self.dfs_walk(lhs, false)?.unwrap();
+        let rhs = self.dfs_walk(rhs, true)?.unwrap();
+        assert!(rhs.rvalue());
+        assert!(!lhs.rvalue());
 
         if let Ast::Token(op) = &*op.ast {
             if let TokenVariant::Punctuator(op) = op.variant {
                 match op {
                     Punctuator::Equals => {
-                        let result = self.cga_store(lhs, rhs.clone())?;
+                        let result = self.cga_store(lhs.clone(), rhs.clone())?;
                         self.current_scope.retake(rhs);
+                        if matches!(lhs.storage(), ValueStorage::Register(_))
+                            && matches!(lhs.ty(), Some(Type::Pointer(_)))
+                        {
+                            // free the register used for the temporary pointer
+                            self.current_scope.retake(lhs);
+                        }
                         Ok(Some(result))
                     }
                     Punctuator::Plus => {

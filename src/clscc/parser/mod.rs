@@ -481,7 +481,7 @@ impl<'a> AstNode<'a> {
         )))(inp)?;
         let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
             rhs.rvalue = true;
-            AstNode::new(
+            AstNode::new_rvalue(
                 Ast::Binary {
                     op,
                     lhs: lhs.to_owned(),
@@ -502,7 +502,7 @@ impl<'a> AstNode<'a> {
         )))(inp)?;
         let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
             rhs.rvalue = true;
-            AstNode::new(
+            AstNode::new_rvalue(
                 Ast::Binary {
                     op,
                     lhs: lhs.to_owned(),

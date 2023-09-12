@@ -1,4 +1,5 @@
 use std::{
+    backtrace::Backtrace,
     cell::RefCell,
     rc::{Rc, Weak},
     sync::atomic::AtomicUsize,
@@ -51,14 +52,19 @@ pub enum CodegenErrorKind {
 }
 
 #[derive(Debug, Error)]
-#[error("CodegenError: {source}")]
+#[error("CodegenError: {source}\nBacktrace:{backtrace}")]
 pub struct CodegenError {
+    #[source]
     pub source: CodegenErrorKind,
+    pub backtrace: Backtrace,
 }
 
 impl CodegenError {
     pub fn new(source: CodegenErrorKind) -> Self {
-        Self { source }
+        Self {
+            source,
+            backtrace: Backtrace::capture(),
+        }
     }
 }
 
@@ -79,6 +85,7 @@ pub struct ValueInner {
     pub ident: Option<String>,
     pub ty: Option<Type>,
     pub storage: ValueStorage,
+    pub rvalue: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -99,8 +106,30 @@ impl Value {
                 ident,
                 ty,
                 storage,
+                rvalue: false,
             }),
         }
+    }
+
+    pub fn new_rvalue(
+        id: ValueId,
+        ident: Option<String>,
+        ty: Option<Type>,
+        storage: ValueStorage,
+    ) -> Self {
+        Self {
+            inner: Rc::new(ValueInner {
+                id,
+                ident,
+                ty,
+                storage,
+                rvalue: true,
+            }),
+        }
+    }
+
+    pub fn rvalue(&self) -> bool {
+        self.inner.rvalue
     }
 
     pub fn ident(&self) -> Option<&String> {
@@ -215,11 +244,21 @@ impl Scope {
         self.values.borrow().get(&id).cloned()
     }
 
-    pub fn insert(&self, ident: Option<String>, ty: Option<Type>, storage: ValueStorage) -> Value {
+    pub fn insert(
+        &self,
+        ident: Option<String>,
+        ty: Option<Type>,
+        storage: ValueStorage,
+        rvalue: bool,
+    ) -> Value {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let value = Value::new(ValueId(id), ident, ty, storage);
+        let value = if rvalue {
+            Value::new_rvalue(ValueId(id), ident, ty, storage)
+        } else {
+            Value::new(ValueId(id), ident, ty, storage)
+        };
         self.values.borrow_mut().insert(ValueId(id), value.clone());
         value
     }
@@ -238,14 +277,15 @@ impl Scope {
         value
     }
 
-    pub fn any_register(&self) -> Result<Value> {
+    pub fn any_register(&self, ty: Option<Type>) -> Result<Value> {
         let mut available_registers = self.available_registers.borrow_mut();
         if let Some(reg) = available_registers.iter().next().cloned() {
+            log::debug!("Allocating register {:?} with type {:?}", reg, ty);
             available_registers.remove(&reg);
             let id = self
                 .next_id
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let val = Value::new(ValueId(id), None, None, ValueStorage::Register(reg));
+            let val = Value::new(ValueId(id), None, ty, ValueStorage::Register(reg));
 
             self.values.borrow_mut().insert(ValueId(id), val.clone());
             Ok(val)
@@ -256,7 +296,7 @@ impl Scope {
         }
     }
 
-    pub fn push_stack(&self, ident: Option<String>, ty: Type) -> Result<Value> {
+    pub fn push_stack(&self, ident: Option<String>, ty: Type, rvalue: bool) -> Result<Value> {
         if ty.sizeof() == 0 {
             return Err(Error::from(CodegenError::new(
                 CodegenErrorKind::UnsizedValue(ty),
@@ -264,33 +304,23 @@ impl Scope {
         }
         let mut stack_offset = self.stack_offset.borrow_mut();
         *stack_offset += ty.sizeof();
-        let id = self
-            .next_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let val = Value::new(
-            ValueId(id),
-            ident,
-            Some(ty),
-            ValueStorage::Stack(*stack_offset),
-        );
-
-        self.values.borrow_mut().insert(ValueId(id), val.clone());
+        let val = self.insert(ident, Some(ty), ValueStorage::Stack(*stack_offset), rvalue);
 
         Ok(val)
     }
 
-    pub fn retake(&self, val: Value) -> Option<Value> {
+    pub fn retake(&self, val: Value) {
         if let Some(val) = self.values.borrow_mut().remove(&val.inner.id) {
             match val.storage() {
                 ValueStorage::Register(reg) => {
+                    log::debug!("Freeing register {:?}", reg);
                     self.available_registers.borrow_mut().insert(*reg);
                 }
                 ValueStorage::Stack(_) => {}
                 ValueStorage::Immediate(_) => {}
             }
-            Some(val)
         } else {
-            None
+            unreachable!("value not found in scope");
         }
     }
 
@@ -367,7 +397,7 @@ impl Codegen {
     }
 
     pub fn gen(&mut self, root: &mut AstNode<'_>) -> Result<String> {
-        self.dfs_walk(root)?;
+        self.dfs_walk(root, true)?;
         let mut lines = vec![];
         for scope in self.scopes.values() {
             for block in scope.blocks.borrow().iter() {
@@ -384,35 +414,35 @@ impl Codegen {
         Ok(lines.join("\n"))
     }
 
-    pub fn dfs_walk(&mut self, node: &mut AstNode<'_>) -> Result<Option<Value>> {
+    pub fn dfs_walk(&mut self, node: &mut AstNode<'_>, rvalue: bool) -> Result<Option<Value>> {
         match node.ast.as_mut() {
             Ast::Binary { op, lhs, rhs } => self.cg_binary(op, lhs, rhs),
             Ast::Block(stmts) => {
                 for stmt in stmts {
-                    self.dfs_walk(stmt)?;
+                    self.dfs_walk(stmt, rvalue)?;
                 }
                 Ok(None)
             }
             Ast::Call { name, args } => {
-                let name = self.dfs_walk(name)?.ok_or(Error::from(CodegenError::new(
-                    CodegenErrorKind::Expected {
+                let name = self
+                    .dfs_walk(name, rvalue)?
+                    .ok_or(Error::from(CodegenError::new(CodegenErrorKind::Expected {
                         expected: vec!["function name".to_string()],
                         got: String::new(),
-                    },
-                )))?;
+                    })))?;
                 let mut arg_vals = vec![];
                 for arg in args {
-                    arg_vals.push(self.dfs_walk(arg)?.ok_or(Error::from(CodegenError::new(
-                        CodegenErrorKind::Expected {
+                    arg_vals.push(self.dfs_walk(arg, rvalue)?.ok_or(Error::from(
+                        CodegenError::new(CodegenErrorKind::Expected {
                             expected: vec!["argument".to_string()],
                             got: String::new(),
-                        },
-                    )))?);
+                        }),
+                    ))?);
                 }
                 self.cg_call(name, arg_vals)
             }
             Ast::Cast { expr } => {
-                let expr = self.dfs_walk(expr)?;
+                let expr = self.dfs_walk(expr, rvalue)?;
                 todo!()
             }
             Ast::Declaration { decl } => {
@@ -420,11 +450,32 @@ impl Codegen {
                 for decl in decl {
                     if let Ast::Ident(id) = &*decl.ast {
                         if let TokenVariant::Ident(id) = &id.variant {
-                            let val = self.current_scope.push_stack(
-                                Some(id.to_owned()),
-                                decl.typ.as_ref().unwrap().to_owned(),
-                            )?;
-                            decl_vals.push(val);
+                            if let Some(Type::Array(elem, numel)) = decl.typ.as_ref() {
+                                // push the elements
+                                for _elem in 0..*numel {
+                                    self.current_scope.push_stack(
+                                        None,
+                                        *elem.to_owned(),
+                                        decl.rvalue,
+                                    )?;
+                                    // decl_vals.push(val);
+                                }
+                                // push the pointer
+                                let ptr = self.current_scope.push_stack(
+                                    Some(id.to_owned()),
+                                    Type::Pointer(elem.clone()),
+                                    // can't change the base address of an array
+                                    true,
+                                )?;
+                                decl_vals.push(ptr);
+                            } else {
+                                let val = self.current_scope.push_stack(
+                                    Some(id.to_owned()),
+                                    decl.typ.as_ref().unwrap().to_owned(),
+                                    decl.rvalue,
+                                )?;
+                                decl_vals.push(val);
+                            }
                         } else {
                             return Err(Error::new(CodegenError::new(
                                 CodegenErrorKind::ExpectedToken {
@@ -443,8 +494,8 @@ impl Codegen {
                 Ok(None)
             }
             Ast::DoWhile { body, cond } => {
-                let body = self.dfs_walk(body)?;
-                let cond = self.dfs_walk(cond)?;
+                let body = self.dfs_walk(body, rvalue)?;
+                let cond = self.dfs_walk(cond, rvalue)?;
                 todo!()
             }
             Ast::For {
@@ -453,10 +504,10 @@ impl Codegen {
                 step,
                 body,
             } => {
-                let init = self.dfs_walk(init)?;
-                let cond = self.dfs_walk(cond)?;
-                let step = self.dfs_walk(step)?;
-                let body = self.dfs_walk(body)?;
+                let init = self.dfs_walk(init, rvalue)?;
+                let cond = self.dfs_walk(cond, rvalue)?;
+                let step = self.dfs_walk(step, rvalue)?;
+                let body = self.dfs_walk(body, rvalue)?;
                 todo!()
             }
             Ast::FunctionDef { name, params, body } => {
@@ -478,8 +529,10 @@ impl Codegen {
                     })));
                 };
                 let mut param_names = vec![];
+                let mut param_types = vec![];
                 for param in params {
-                    let param = self.dfs_walk(param)?.unwrap();
+                    let param = self.dfs_walk(param, rvalue)?.unwrap();
+                    param_types.push(param.ty().cloned().unwrap());
                     if let Some(ident) = param.ident() {
                         param_names.push(ident.to_owned());
                     } else {
@@ -496,16 +549,17 @@ impl Codegen {
                 if name == "start" {
                     self.cga_start_prelude()?;
                 }
-                for param in param_names {
-                    let val = self.cga_pop_stack()?;
+                for (param, param_ty) in param_names.into_iter().zip(param_types.into_iter()) {
+                    let val = self.cga_pop_stack(Some(param_ty))?;
                     self.current_scope.insert(
                         Some(param),
                         val.ty().cloned(),
                         val.storage().clone(),
+                        true,
                     );
                 }
                 self.current_scope.push_block(format!("{}body", name));
-                let body = self.dfs_walk(body)?;
+                let body = self.dfs_walk(body, rvalue)?;
                 {
                     let mut blocks = self.current_scope.blocks.borrow_mut();
                     blocks.first_mut().unwrap().sequence.extend_from_slice(&[
@@ -560,56 +614,57 @@ impl Codegen {
                 )))
             }
             Ast::If { cond, then, els } => {
-                let cond = self.dfs_walk(cond)?;
-                let then = self.dfs_walk(then)?;
+                let cond = self.dfs_walk(cond, rvalue)?;
+                let then = self.dfs_walk(then, rvalue)?;
                 let els = if let Some(els) = els {
-                    Some(self.dfs_walk(els)?)
+                    Some(self.dfs_walk(els, rvalue)?)
                 } else {
                     None
                 };
                 todo!()
             }
             Ast::Index { name, index } => {
-                let name = self.dfs_walk(name)?;
-                let index = self.dfs_walk(index)?;
-                todo!()
+                let name = self.dfs_walk(name, rvalue)?.unwrap();
+                let index = self.dfs_walk(index, rvalue)?.unwrap();
+                self.cg_index(name, index, rvalue)
             }
             Ast::Integer(val) => Ok(Some(self.current_scope.insert(
                 None,
                 Some(Type::Int),
                 ValueStorage::Immediate(Immediate::Linked((*val).try_into()?)),
+                true,
             ))),
             Ast::Member { name, member } => {
-                let name = self.dfs_walk(name)?;
-                let member = self.dfs_walk(member)?;
+                let name = self.dfs_walk(name, rvalue)?;
+                let member = self.dfs_walk(member, rvalue)?;
                 todo!()
             }
             Ast::Pointer(expr) => {
-                let expr = self.dfs_walk(expr)?;
+                let expr = self.dfs_walk(expr, rvalue)?;
                 todo!()
             }
             Ast::Postfix { op, lhs } => {
-                let op = self.dfs_walk(op)?;
-                let lhs = self.dfs_walk(lhs)?;
+                let op = self.dfs_walk(op, rvalue)?;
+                let lhs = self.dfs_walk(lhs, rvalue)?;
                 dbg!(&op, &lhs);
                 todo!()
             }
             Ast::Program(stmts) => {
                 for stmt in stmts {
-                    self.dfs_walk(stmt)?;
+                    self.dfs_walk(stmt, rvalue)?;
                 }
                 Ok(None)
             }
             Ast::Return(expr) => {
                 let expr = if let Some(expr) = expr {
-                    Some(self.dfs_walk(expr)?)
+                    Some(self.dfs_walk(expr, rvalue)?)
                 } else {
                     None
                 };
                 todo!()
             }
             Ast::Sizeof(ty) => {
-                let ty = self.dfs_walk(ty)?;
+                let ty = self.dfs_walk(ty, rvalue)?;
                 todo!()
             }
             Ast::StringLiteral(val) => {
@@ -620,13 +675,13 @@ impl Codegen {
                 Ok(None)
             }
             Ast::Unary { op, rhs } => {
-                let op = self.dfs_walk(op)?;
-                let rhs = self.dfs_walk(rhs)?;
+                let op = self.dfs_walk(op, rvalue)?;
+                let rhs = self.dfs_walk(rhs, rvalue)?;
                 todo!()
             }
             Ast::While { cond, body } => {
-                let cond = self.dfs_walk(cond)?;
-                let body = self.dfs_walk(body)?;
+                let cond = self.dfs_walk(cond, rvalue)?;
+                let body = self.dfs_walk(body, rvalue)?;
                 todo!()
             }
         }

@@ -43,7 +43,7 @@ impl Codegen {
                 });
             }
             ValueStorage::Stack(offset) => {
-                let tmp = self.current_scope.any_register()?;
+                let tmp = self.current_scope.any_register(val.ty().cloned())?;
                 let tmp_reg = tmp.get_register()?;
                 self.current_scope.push_instr(Instruction {
                     op: Opcode::Ldl,

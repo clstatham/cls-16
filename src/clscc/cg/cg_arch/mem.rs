@@ -1,13 +1,18 @@
 use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
-use crate::clscc::cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage};
+use crate::clscc::{
+    cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage},
+    parser::Type,
+};
 
 impl Codegen {
     pub(crate) fn cga_push_stack(&mut self, value: Value) -> Result<Value> {
         let value_reg = value.get_register()?;
         let value_ty = value.ty().unwrap().clone();
-        let new_value = self.current_scope.push_stack(None, value_ty.clone())?;
+        let new_value = self
+            .current_scope
+            .push_stack(None, value_ty.clone(), value.rvalue())?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Sub,
             format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
@@ -24,8 +29,8 @@ impl Codegen {
         Ok(new_value)
     }
 
-    pub(crate) fn cga_pop_stack(&mut self) -> Result<Value> {
-        let value = self.current_scope.any_register()?;
+    pub(crate) fn cga_pop_stack(&mut self, ty: Option<Type>) -> Result<Value> {
+        let value = self.current_scope.any_register(ty)?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Ldl,
             format: InstrFormat::RRI(value.get_register()?, Register::SP, Immediate::Linked(0)),
@@ -41,7 +46,179 @@ impl Codegen {
         Ok(value)
     }
 
+    pub(crate) fn cga_index(&mut self, arr: Value, index: Value, rvalue: bool) -> Result<Value> {
+        let elem_ty = match arr.ty().unwrap() {
+            Type::Array(ty, _) => ty.to_owned(),
+            Type::Pointer(ty) => ty.to_owned(),
+            _ => unreachable!(),
+        };
+
+        let arr_offset = arr.get_stack_offset()?;
+        let index_val = self
+            .current_scope
+            .any_register(Some(Type::Pointer(elem_ty.clone())))?;
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Mov,
+            format: InstrFormat::RI(
+                index_val.get_register()?,
+                Immediate::Linked(elem_ty.sizeof() as u16),
+            ),
+        });
+        match index.storage() {
+            ValueStorage::Register(index) => {
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Mul,
+                    format: InstrFormat::RRR(
+                        index_val.get_register()?,
+                        *index,
+                        index_val.get_register()?,
+                    ),
+                });
+            }
+            ValueStorage::Stack(_) => todo!(),
+            ValueStorage::Immediate(index) => {
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Mul,
+                    format: InstrFormat::RRI(
+                        index_val.get_register()?,
+                        index_val.get_register()?,
+                        index.to_owned(),
+                    ),
+                });
+            }
+        }
+
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Add,
+            format: InstrFormat::RRI(
+                index_val.get_register()?,
+                index_val.get_register()?,
+                Immediate::Linked(arr_offset as u16),
+            ),
+        });
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Add,
+            format: InstrFormat::RRR(
+                index_val.get_register()?,
+                Register::FP,
+                index_val.get_register()?,
+            ),
+        });
+        if rvalue {
+            let result = self.current_scope.any_register(Some(*elem_ty.to_owned()))?;
+            self.current_scope.push_instr(Instruction {
+                op: Opcode::Ldl,
+                format: InstrFormat::RRI(
+                    result.get_register()?,
+                    index_val.get_register()?,
+                    Immediate::Linked(0),
+                ),
+            });
+            self.current_scope.push_instr(Instruction {
+                op: Opcode::Ldh,
+                format: InstrFormat::RRI(
+                    result.get_register()?,
+                    index_val.get_register()?,
+                    Immediate::Linked(1),
+                ),
+            });
+
+            self.current_scope.retake(index_val);
+
+            Ok(result)
+        } else {
+            Ok(index_val)
+        }
+    }
+
+    fn cga_store_ptr(&mut self, ptr: Value, rhs: Value) -> Result<Value> {
+        let ptr_reg = ptr.get_register()?;
+        match rhs.storage() {
+            ValueStorage::Register(rhs_reg) => {
+                log::trace!("store ptr: register");
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Stl,
+                    format: InstrFormat::RRI(ptr_reg, *rhs_reg, Immediate::Linked(0)),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Sth,
+                    format: InstrFormat::RRI(ptr_reg, *rhs_reg, Immediate::Linked(1)),
+                });
+                Ok(ptr)
+            }
+            ValueStorage::Stack(rhs_offset) => {
+                log::trace!("store ptr: stack");
+                let tmp_reg = self.current_scope.any_register(rhs.ty().cloned())?;
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Ldl,
+                    format: InstrFormat::RRI(
+                        tmp_reg.get_register()?,
+                        Register::FP,
+                        Immediate::Linked(*rhs_offset as u16),
+                    ),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Ldh,
+                    format: InstrFormat::RRI(
+                        tmp_reg.get_register()?,
+                        Register::FP,
+                        Immediate::Linked(*rhs_offset as u16 + 1),
+                    ),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Stl,
+                    format: InstrFormat::RRI(
+                        ptr_reg,
+                        tmp_reg.get_register()?,
+                        Immediate::Linked(0),
+                    ),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Sth,
+                    format: InstrFormat::RRI(
+                        ptr_reg,
+                        tmp_reg.get_register()?,
+                        Immediate::Linked(1),
+                    ),
+                });
+                self.current_scope.retake(tmp_reg);
+                Ok(ptr)
+            }
+            ValueStorage::Immediate(imm) => {
+                log::trace!("store ptr: immediate");
+                let tmp_reg = self.current_scope.any_register(rhs.ty().cloned())?;
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Mov,
+                    format: InstrFormat::RI(tmp_reg.get_register()?, imm.to_owned()),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Stl,
+                    format: InstrFormat::RRI(
+                        ptr_reg,
+                        tmp_reg.get_register()?,
+                        Immediate::Linked(0),
+                    ),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Sth,
+                    format: InstrFormat::RRI(
+                        ptr_reg,
+                        tmp_reg.get_register()?,
+                        Immediate::Linked(1),
+                    ),
+                });
+                self.current_scope.retake(tmp_reg);
+
+                Ok(ptr)
+            }
+        }
+    }
+
     pub(crate) fn cga_store(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+        assert!(!lhs.rvalue());
+        if let Some(Type::Pointer(_)) = lhs.ty() {
+            return self.cga_store_ptr(lhs, rhs);
+        }
         match (lhs.storage(), rhs.storage()) {
             (ValueStorage::Register(dest), ValueStorage::Register(src)) => {
                 self.current_scope.push_instr(Instruction {
@@ -96,7 +273,7 @@ impl Codegen {
                 Ok(lhs)
             }
             (ValueStorage::Stack(dest_offset), ValueStorage::Stack(src_offset)) => {
-                let tmp_src = self.current_scope.any_register()?;
+                let tmp_src = self.current_scope.any_register(rhs.ty().cloned())?;
                 self.current_scope.push_instr(Instruction {
                     op: Opcode::Ldl,
                     format: InstrFormat::RRI(
@@ -133,7 +310,7 @@ impl Codegen {
                 Ok(lhs)
             }
             (ValueStorage::Stack(dest_offset), ValueStorage::Immediate(src)) => {
-                let tmp_src = self.current_scope.any_register()?;
+                let tmp_src = self.current_scope.any_register(rhs.ty().cloned())?;
                 self.current_scope.push_instr(Instruction {
                     op: Opcode::Mov,
                     format: InstrFormat::RI(tmp_src.get_register()?, src.to_owned()),

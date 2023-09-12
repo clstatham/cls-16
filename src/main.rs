@@ -1,4 +1,5 @@
 #![cfg_attr(doc, warn(missing_docs))]
+#![feature(error_generic_member_access)]
 #![doc = include_str!("../README.md")]
 
 use std::path::PathBuf;

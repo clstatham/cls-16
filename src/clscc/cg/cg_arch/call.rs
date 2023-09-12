@@ -1,7 +1,10 @@
 use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
-use crate::clscc::cg::{Codegen, Value};
+use crate::clscc::{
+    cg::{Codegen, Value},
+    parser::Type,
+};
 
 impl Codegen {
     pub(crate) fn cga_call(&mut self, name: Value, args: Vec<Value>) -> Result<Option<Value>> {
@@ -21,7 +24,7 @@ impl Codegen {
             self.current_scope.num_blocks()
         );
         self.current_scope.insert_label(&ret_addr_label);
-        let ret_addr_reg = self.current_scope.any_register()?;
+        let ret_addr_reg = self.current_scope.any_register(Some(Type::Int))?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Mov,
             format: InstrFormat::RI(
@@ -39,7 +42,7 @@ impl Codegen {
         });
         self.current_scope.push_block(ret_addr_label);
 
-        let ret_val = self.current_scope.any_register()?;
+        let ret_val = self.current_scope.any_register(None)?; // todo: return types
         self.current_scope.push_instr(Instruction {
             op: Opcode::Mov,
             format: InstrFormat::RR(ret_val.get_register()?, Register::R1),
