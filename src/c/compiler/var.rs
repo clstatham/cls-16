@@ -19,7 +19,8 @@ pub enum VarStorage {
 
 struct VarInner {
     typ: TypeSpecifier,
-    name: String,
+    id: u32,
+    name: Option<String>,
     storage: VarStorage,
 }
 
@@ -35,19 +36,24 @@ pub struct Var {
 
 impl Var {
     /// Creates a new [`Var`] with the specified expected type, identifier, and storage method.
-    pub fn new(typ: TypeSpecifier, name: &str, storage: VarStorage) -> Self {
+    pub fn new(typ: TypeSpecifier, id: u32, name: Option<&str>, storage: VarStorage) -> Self {
         Self {
             inner: Rc::new(VarInner {
                 typ,
-                name: name.to_owned(),
+                id,
+                name: name.map(|s| s.to_owned()),
                 storage,
             }),
         }
     }
 
-    /// This [`Var`]'s identifier.
-    pub fn name(&self) -> &str {
-        &self.inner.name
+    /// This [`Var`]'s unique ID in the context of its parent function.
+    pub fn id(&self) -> u32 {
+        self.inner.id
+    }
+
+    pub fn name(&self) -> Option<&String> {
+        self.inner.name.as_ref()
     }
 
     /// This [`Var`]'s expected C type.

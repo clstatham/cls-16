@@ -14,7 +14,7 @@ impl CompilerState {
         match stmt {
             Statement::Builtin(stmt) => self
                 .compile_builtin_statement(&stmt.item, func_name)
-                .context("compiling statement"),
+                .context("compiling builtin statement"),
             Statement::Labeled(_stmt) => todo!(),
             Statement::Compound(stmt) => {
                 for block_item in stmt.item.0.iter() {
@@ -24,16 +24,16 @@ impl CompilerState {
             }
             Statement::Selection(stmt) => self
                 .compile_selection_statement(&stmt.item, func_name)
-                .context("compiling statement"),
+                .context("compiling selection statement"),
             Statement::Iteration(stmt) => self
                 .compile_iteration_statement(&stmt.item, func_name)
-                .context("compiling statement"),
+                .context("compiling iteration statement"),
             Statement::Jump(stmt) => self
                 .compile_jump_statement(&stmt.item, func_name)
-                .context("compiling statement"),
+                .context("compiling jump statement"),
             Statement::Expr(expr) => self
                 .compile_expr(&expr.item, None, func_name)
-                .context("compiling statement"),
+                .context("compiling expr statement"),
         }
     }
 }

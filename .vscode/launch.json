@@ -7,7 +7,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'cls16'",
+            "name": "Debug executable 'cls16' (compile)",
             "cargo": {
                 "args": [
                     "build",
@@ -19,7 +19,12 @@
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": [
+                "compile",
+                "test.c",
+                "--emit-asm",
+                "-O0",
+            ],
             "cwd": "${workspaceFolder}"
         },
         {

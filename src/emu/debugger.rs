@@ -87,6 +87,23 @@ impl<'b, 'a> Debugger<'b, 'a> {
                 },
             )
             .add(
+                "peek",
+                command! {
+                    "Peek a value from memory",
+                    (addr:String) => |addr: String| {
+                        let emu = self.emu.borrow();
+                        let addr = if let Ok(addr) = addr.parse::<u16>() {
+                            addr
+                        } else {
+                            u16::from_str_radix(&addr, 16).unwrap()
+                        };
+                        let val = emu.ram.memory[addr as usize];
+                        eprintln!("{}={:08X}", addr, val);
+                        Ok(CommandStatus::Done)
+                    }
+                },
+            )
+            .add(
                 "halt",
                 command! {
                     "Halt execution",

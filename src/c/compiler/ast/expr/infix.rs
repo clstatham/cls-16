@@ -7,23 +7,21 @@ impl CompilerState {
         dest: Option<&Var>,
         func_name: &str,
     ) -> Result<()> {
-        let tmp_rhs_reg = self
+        let (tmp_rhs_reg, rhs) = self
             .functions
             .get_mut(func_name)
             .unwrap()
-            .any_reg()
+            .any_reg(TypeSpecifier::Void)
             .unwrap();
-        let tmp_lhs_reg = self
+        let (tmp_lhs_reg, lhs) = self
             .functions
             .get_mut(func_name)
             .unwrap()
-            .any_reg()
+            .any_reg(TypeSpecifier::Void)
             .unwrap();
 
         if let Some(dest) = dest {
-            let lhs = Var::new(dest.typ(), "lhs", var::VarStorage::Register(tmp_lhs_reg));
             self.compile_expr(&infix.item.lhs.item, Some(&lhs), func_name)?;
-            let rhs = Var::new(dest.typ(), "rhs", var::VarStorage::Register(tmp_rhs_reg));
             self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
             match &infix.item.op.item {
                 InfixOp::Assign => unreachable!(),
@@ -58,26 +56,30 @@ impl CompilerState {
                             });
                         }
                         VarStorage::StackOffset(dest_offset) => {
-                            let tmp_dest = self
+                            let (tmp_dest_reg, tmp_dest) = self
                                 .functions
                                 .get_mut(func_name)
                                 .unwrap()
-                                .any_reg()
+                                .any_reg(dest.typ())
                                 .unwrap();
                             {
                                 let block =
                                     self.functions.get_mut(func_name).unwrap().last_block_mut();
-                                load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                                load_fp_offset_to_reg(tmp_dest_reg, *dest_offset, block);
                                 block.sequence.push(Instruction {
                                     op,
-                                    format: InstrFormat::RRR(tmp_dest, tmp_lhs_reg, tmp_rhs_reg),
+                                    format: InstrFormat::RRR(
+                                        tmp_dest_reg,
+                                        tmp_lhs_reg,
+                                        tmp_rhs_reg,
+                                    ),
                                 });
-                                store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
                             }
                             self.functions
                                 .get_mut(func_name)
                                 .unwrap()
-                                .take_back_reg(tmp_dest);
+                                .take_back(tmp_dest);
                         }
                         VarStorage::Immediate(_) => {
                             return Err(Error::from(CompError::InvalidExpression(
@@ -93,11 +95,11 @@ impl CompilerState {
                 | InfixOp::LtEq
                 | InfixOp::Gt
                 | InfixOp::GtEq => {
-                    let tmp_dest = self
+                    let (tmp_dest_reg, tmp_dest) = self
                         .functions
                         .get_mut(func_name)
                         .unwrap()
-                        .any_reg()
+                        .any_reg(dest.typ())
                         .unwrap();
                     let nblock = self.functions.get(func_name).unwrap().code.len();
                     let true_block = Block::new(&format!("{func_name}true{nblock}",));
@@ -107,7 +109,7 @@ impl CompilerState {
                         let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
                         block.sequence.push(Instruction {
                             op: Opcode::Sub,
-                            format: InstrFormat::RRR(tmp_dest, tmp_lhs_reg, tmp_rhs_reg),
+                            format: InstrFormat::RRR(tmp_dest_reg, tmp_lhs_reg, tmp_rhs_reg),
                         });
                         match infix.item.op.item {
                             InfixOp::EqEq => {
@@ -218,7 +220,7 @@ impl CompilerState {
                         let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
                         block.sequence.push(Instruction {
                             op: Opcode::Mov,
-                            format: InstrFormat::RI(tmp_dest, Immediate::Linked(1)),
+                            format: InstrFormat::RI(tmp_dest_reg, Immediate::Linked(1)),
                         });
                         block.sequence.push(Instruction {
                             op: Opcode::Jmp,
@@ -234,7 +236,7 @@ impl CompilerState {
                         let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
                         block.sequence.push(Instruction {
                             op: Opcode::Mov,
-                            format: InstrFormat::RI(tmp_dest, Immediate::Linked(0)),
+                            format: InstrFormat::RI(tmp_dest_reg, Immediate::Linked(0)),
                         });
                     }
                     self.functions
@@ -247,12 +249,12 @@ impl CompilerState {
                             let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
                             block.sequence.push(Instruction {
                                 op: Opcode::Mov,
-                                format: InstrFormat::RR(*dest_reg, tmp_dest),
+                                format: InstrFormat::RR(*dest_reg, tmp_dest_reg),
                             });
                         }
                         VarStorage::StackOffset(dest_offset) => {
                             let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
-                            store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                            store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
                         }
                         VarStorage::Immediate(_) => {
                             return Err(Error::from(CompError::InvalidExpression(
@@ -264,7 +266,7 @@ impl CompilerState {
                     self.functions
                         .get_mut(func_name)
                         .unwrap()
-                        .take_back_reg(tmp_dest);
+                        .take_back(tmp_dest);
                 }
                 InfixOp::Mod => todo!(),
 
@@ -281,9 +283,100 @@ impl CompilerState {
                             .functions
                             .get(func_name)
                             .unwrap()
-                            .get(lhs.item.0)
+                            .get_by_name(lhs.item.0)
                             .unwrap();
                         self.compile_expr(&infix.item.rhs.item, Some(&dest), func_name)?;
+                    } else if let Expr::Postfix(postfix) = &infix.item.lhs.item {
+                        if let PostfixExpr::Index(index) = &postfix.item {
+                            if let Expr::Ident(id) = &index.item.arr.item {
+                                // arrays in C are just pointers to some some stack memory
+                                let arr = self
+                                    .functions
+                                    .get(func_name)
+                                    .unwrap()
+                                    .get_by_name(id.item.0)
+                                    .unwrap();
+                                let (tmp_index_reg, tmp_index) = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .any_reg(TypeSpecifier::Int)
+                                    .unwrap();
+                                self.compile_expr(
+                                    &index.item.idx.item,
+                                    Some(&tmp_index),
+                                    func_name,
+                                )?;
+                                {
+                                    let block =
+                                        self.functions.get_mut(func_name).unwrap().last_block_mut();
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Mul,
+                                        format: InstrFormat::RRI(
+                                            tmp_index_reg,
+                                            tmp_index_reg,
+                                            Immediate::Linked(2),
+                                        ),
+                                    });
+                                }
+                                let (tmp_dest_reg, tmp_dest) = self
+                                    .functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .any_reg(arr.typ())
+                                    .unwrap();
+                                {
+                                    let block =
+                                        self.functions.get_mut(func_name).unwrap().last_block_mut();
+                                    load_fp_offset_to_reg(
+                                        tmp_dest_reg,
+                                        arr.get_stack_offset().unwrap(),
+                                        block,
+                                    );
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Add,
+                                        format: InstrFormat::RRR(
+                                            tmp_dest_reg,
+                                            tmp_dest_reg,
+                                            tmp_index_reg,
+                                        ),
+                                    });
+                                }
+                                self.functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .take_back(tmp_index);
+                                self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
+                                {
+                                    let block =
+                                        self.functions.get_mut(func_name).unwrap().last_block_mut();
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Stl,
+                                        format: InstrFormat::RRI(
+                                            tmp_dest_reg,
+                                            tmp_rhs_reg,
+                                            Immediate::Linked(0),
+                                        ),
+                                    });
+                                    block.sequence.push(Instruction {
+                                        op: Opcode::Sth,
+                                        format: InstrFormat::RRI(
+                                            tmp_dest_reg,
+                                            tmp_rhs_reg,
+                                            Immediate::Linked(1),
+                                        ),
+                                    });
+                                }
+                                self.functions
+                                    .get_mut(func_name)
+                                    .unwrap()
+                                    .take_back(tmp_dest);
+                            } else {
+                                todo!("postfix assign to index of non-ident")
+                            }
+                        } else {
+                            todo!("postfix assign to non-index")
+                        }
                     } else {
                         return Err(Error::from(CompError::InvalidExpression(
                             infix.span.location_line() as usize,
@@ -305,10 +398,8 @@ impl CompilerState {
                             .functions
                             .get(func_name)
                             .unwrap()
-                            .get(lhs.item.0)
+                            .get_by_name(lhs.item.0)
                             .unwrap();
-                        let rhs =
-                            Var::new(dest.typ(), "rhs", var::VarStorage::Register(tmp_rhs_reg));
                         self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
                         let op = match infix.item.op.item {
                             InfixOp::AddAssign => Opcode::Add,
@@ -331,20 +422,28 @@ impl CompilerState {
                                     });
                                 }
                                 VarStorage::StackOffset(dest_offset) => {
-                                    let tmp_dest = self
+                                    let (tmp_dest_reg, tmp_dest) = self
                                         .functions
                                         .get_mut(func_name)
                                         .unwrap()
-                                        .any_reg()
+                                        .any_reg(dest.typ())
                                         .unwrap();
                                     let block =
                                         self.functions.get_mut(func_name).unwrap().last_block_mut();
-                                    load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                                    load_fp_offset_to_reg(tmp_dest_reg, *dest_offset, block);
                                     block.sequence.push(Instruction {
                                         op,
-                                        format: InstrFormat::RRR(tmp_dest, tmp_dest, tmp_rhs_reg),
+                                        format: InstrFormat::RRR(
+                                            tmp_dest_reg,
+                                            tmp_dest_reg,
+                                            tmp_rhs_reg,
+                                        ),
                                     });
-                                    store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                    store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
+                                    self.functions
+                                        .get_mut(func_name)
+                                        .unwrap()
+                                        .take_back(tmp_dest);
                                 }
                                 VarStorage::Immediate(_) => {
                                     return Err(Error::from(CompError::InvalidExpression(
@@ -365,14 +464,8 @@ impl CompilerState {
                 _ => unreachable!(),
             }
         }
-        self.functions
-            .get_mut(func_name)
-            .unwrap()
-            .take_back_reg(tmp_rhs_reg);
-        self.functions
-            .get_mut(func_name)
-            .unwrap()
-            .take_back_reg(tmp_lhs_reg);
+        self.functions.get_mut(func_name).unwrap().take_back(rhs);
+        self.functions.get_mut(func_name).unwrap().take_back(lhs);
         Ok(())
     }
 }

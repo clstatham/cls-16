@@ -6,7 +6,7 @@ pub struct Ram {
     pub data_bus: Receiver<u8>,
     pub output_bus: Sender<u8>,
     write_enabled: bool,
-    memory: Box<[u8]>,
+    pub memory: Box<[u8]>,
 }
 
 impl Ram {

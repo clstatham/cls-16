@@ -35,7 +35,8 @@ impl Block {
 pub struct FunctionContext {
     pub return_type: TypeSpecifier,
     pub name: String,
-    allocations: FxHashMap<String, Var>,
+    next_id: u32,
+    allocations: FxHashMap<u32, Var>,
     avail_regs: FxHashSet<Register>,
     pub stack_offset: u16,
     pub max_stack_offset: u16,
@@ -50,35 +51,50 @@ impl FunctionContext {
     }
 
     pub fn insert(&mut self, ssa: Var) {
-        self.allocations.insert(ssa.name().to_owned(), ssa);
+        self.allocations.insert(ssa.id().to_owned(), ssa);
     }
 
-    pub fn get(&self, name: &str) -> Option<Var> {
-        self.allocations.get(name).cloned()
+    pub fn get(&self, id: u32) -> Option<Var> {
+        self.allocations.get(&id).cloned()
     }
 
-    pub fn push(&mut self, name: &str, typ: TypeSpecifier) -> Var {
-        self.stack_offset += 2;
-        self.max_stack_offset += 2;
-        let ssa = Var::new(typ, name, var::VarStorage::StackOffset(self.stack_offset));
-        self.allocations.insert(name.to_owned(), ssa.clone());
+    pub fn get_by_name(&self, name: &str) -> Option<Var> {
+        self.allocations
+            .iter()
+            .find(|(_, v)| v.name() == Some(&name.to_owned()))
+            .map(|(_, v)| v.clone())
+    }
+
+    pub fn push_arr(&mut self, name: Option<&str>, elem_typ: TypeSpecifier, numel: u16) -> Var {
+        self.stack_offset += 2 * numel;
+        self.max_stack_offset += 2 * numel;
+        let ssa = Var::new(
+            elem_typ,
+            self.next_id,
+            name,
+            VarStorage::StackOffset(self.stack_offset),
+        );
+        self.next_id += 1;
+        self.allocations.insert(ssa.id(), ssa.clone());
         ssa
     }
 
-    pub fn get_or_push(&mut self, name: &str, typ: TypeSpecifier) -> Var {
-        if let Some(ssa) = self.allocations.get(name) {
-            ssa.clone()
-        } else {
-            self.push(name, typ)
-        }
-    }
-
-    pub fn take_back_reg(&mut self, reg: Register) {
-        self.avail_regs.insert(reg);
+    pub fn push(&mut self, name: Option<&str>, typ: TypeSpecifier) -> Var {
+        self.stack_offset += 2;
+        self.max_stack_offset += 2;
+        let ssa = Var::new(
+            typ,
+            self.next_id,
+            name,
+            VarStorage::StackOffset(self.stack_offset),
+        );
+        self.next_id += 1;
+        self.allocations.insert(ssa.id(), ssa.clone());
+        ssa
     }
 
     pub fn take_back(&mut self, var: Var) {
-        if self.allocations.remove(var.name()).is_some() {
+        if self.allocations.remove(&var.id()).is_some() {
             match var.storage() {
                 VarStorage::Register(reg) => {
                     self.avail_regs.insert(*reg);
@@ -94,7 +110,7 @@ impl FunctionContext {
         }
     }
 
-    pub fn any_reg(&mut self) -> Option<Register> {
+    pub fn any_reg(&mut self, typ: TypeSpecifier) -> Option<(Register, Var)> {
         [
             Register::R2,
             Register::R3,
@@ -104,6 +120,12 @@ impl FunctionContext {
         ]
         .into_iter()
         .find(|&reg| self.avail_regs.remove(&reg))
+        .map(|reg| {
+            let var = Var::new(typ, self.next_id, None, VarStorage::Register(reg));
+            self.next_id += 1;
+            self.insert(var.clone());
+            (reg, var)
+        })
     }
 }
 
@@ -174,12 +196,82 @@ pub struct CompilerState {
 
 impl CompilerState {
     fn compile_local_decl(&mut self, decl: &Declaration<'_>, func_name: &str) -> Result<()> {
-        let dest = self
-            .functions
-            .get_mut(func_name)
-            .unwrap()
-            .push(decl.id.item.id.item.0, decl.id.item.typ.item.clone());
-        self.compile_expr(&decl.expr.item, Some(&dest), func_name)?;
+        let init_expr = &decl.init_expr.item;
+        match init_expr {
+            Expr::Ident(id) => {
+                // default initialization for the variable
+                let var = self
+                    .functions
+                    .get_mut(func_name)
+                    .unwrap()
+                    .push(Some(id.item.0), decl.typ.item.clone());
+                let var_offset = var.get_stack_offset().unwrap();
+                {
+                    let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
+                    block.sequence.push(Instruction {
+                        op: Opcode::Stl,
+                        format: InstrFormat::RRI(
+                            Register::FP,
+                            Register::R0,
+                            Immediate::Linked(var_offset),
+                        ),
+                    });
+                    block.sequence.push(Instruction {
+                        op: Opcode::Sth,
+                        format: InstrFormat::RRI(
+                            Register::FP,
+                            Register::R0,
+                            Immediate::Linked(var_offset + 1),
+                        ),
+                    });
+                }
+            }
+            Expr::Constant(_) => todo!(),
+            Expr::Infix(_) => todo!(),
+            Expr::Postfix(postfix) => {
+                if let PostfixExpr::Index(index) = &postfix.item {
+                    if let Expr::Ident(id) = index.item.arr.item {
+                        if let Expr::Constant(numel) = index.item.idx.item {
+                            let Constant::Integer(numel) = numel.item;
+                            let first_elem = self.functions.get_mut(func_name).unwrap().push_arr(
+                                None,
+                                decl.typ.item.clone(),
+                                numel,
+                            );
+                            let first_elem_offset = first_elem.get_stack_offset().unwrap();
+                            let var = self.functions.get_mut(func_name).unwrap().push(
+                                Some(id.item.0),
+                                TypeSpecifier::Pointer(Box::new(decl.typ.item.clone())),
+                            );
+                            let var_offset = var.get_stack_offset().unwrap();
+
+                            let (tmp_reg, tmp) = self
+                                .functions
+                                .get_mut(func_name)
+                                .unwrap()
+                                .any_reg(TypeSpecifier::Int)
+                                .unwrap();
+                            {
+                                let block =
+                                    self.functions.get_mut(func_name).unwrap().last_block_mut();
+
+                                block.sequence.push(Instruction {
+                                    op: Opcode::Add,
+                                    format: InstrFormat::RRI(
+                                        tmp_reg,
+                                        Register::FP,
+                                        Immediate::Linked(first_elem_offset),
+                                    ),
+                                });
+                                store_reg_to_fp_offset(var_offset, tmp_reg, block);
+                            }
+                            self.functions.get_mut(func_name).unwrap().take_back(tmp);
+                        }
+                    }
+                }
+            }
+            Expr::Unary(_) => todo!(),
+        }
         Ok(())
     }
 
@@ -210,6 +302,7 @@ impl CompilerState {
                     Register::R5,
                     Register::R6,
                 ]),
+                next_id: 0,
                 stack_offset: 0,
                 max_stack_offset: 0,
                 prologue: Block::new(&format!("{func_name}prologue")),
@@ -222,7 +315,7 @@ impl CompilerState {
                 format: InstrFormat::RRI(Register::SP, Register::SP, Immediate::Linked(2)),
             });
             for arg in func.param_list.iter().rev() {
-                let var = ctx.push(arg.item.id.item.0, arg.item.typ.item.clone());
+                let var = ctx.push(Some(arg.item.id.item.0), arg.item.typ.item.clone());
                 pop_reg_from_stack(Register::R6, &mut ctx.prologue);
                 store_reg_to_fp_offset(
                     var.get_stack_offset().unwrap(),
@@ -269,7 +362,7 @@ impl CompilerState {
                     ),
                 });
 
-                let reg = ctx.any_reg().unwrap();
+                let (reg, reg_var) = ctx.any_reg(TypeSpecifier::Int).unwrap();
                 pop_reg_from_stack(reg, &mut ctx.epologue);
                 ctx.epologue.sequence.push(Instruction {
                     op: Opcode::Mov,
@@ -279,7 +372,7 @@ impl CompilerState {
                     op: Opcode::Jmp,
                     format: InstrFormat::R(reg),
                 });
-                ctx.take_back_reg(reg);
+                ctx.take_back(reg_var);
             }
         } else {
             return Err(Error::new(CompError::DuplicateSymbol(func_name)));

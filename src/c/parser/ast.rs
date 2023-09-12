@@ -83,8 +83,8 @@ pub struct FunctionDefinition<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Declaration<'a> {
-    pub id: WithSpan<'a, TypedIdent<'a>>,
-    pub expr: WithSpan<'a, Expr<'a>>,
+    pub typ: WithSpan<'a, TypeSpecifier>,
+    pub init_expr: WithSpan<'a, Expr<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -159,10 +159,16 @@ pub struct CallExpr<'a> {
     pub args: Vec<WithSpan<'a, Expr<'a>>>,
 }
 
+#[derive(PartialEq, Debug, Clone)]
+pub struct IndexExpr<'a> {
+    pub arr: WithSpan<'a, Expr<'a>>,
+    pub idx: WithSpan<'a, Expr<'a>>,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum PostfixExpr<'a> {
     Call(WithSpan<'a, CallExpr<'a>>),
-    // Index(WithSpan<'a, IndexExpr<'a>>),
+    Index(WithSpan<'a, IndexExpr<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -179,8 +185,6 @@ pub enum Precedence {
     LessGreater,
     Sum,
     Product,
-    Call,
-    Index,
 }
 
 #[derive(PartialEq, Debug, Clone)]

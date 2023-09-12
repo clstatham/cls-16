@@ -8,30 +8,23 @@ impl CompilerState {
     ) -> Result<()> {
         match stmt.builtin.item {
             Keyword::Printi => {
-                let dest = self
+                let (tmp_dest_reg, tmp_dest) = self
                     .functions
                     .get_mut(func_name)
                     .unwrap()
-                    .push("dest", TypeSpecifier::Int);
-                self.compile_expr(&stmt.expr.item, Some(&dest), func_name)?;
-                let tmp_dest = self
-                    .functions
-                    .get_mut(func_name)
-                    .unwrap()
-                    .any_reg()
+                    .any_reg(TypeSpecifier::Int)
                     .unwrap();
+                self.compile_expr(&stmt.expr.item, Some(&tmp_dest), func_name)?;
                 let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
 
-                load_fp_offset_to_reg(tmp_dest, dest.get_stack_offset().unwrap(), block);
                 block.sequence.push(Instruction {
                     op: Opcode::Printi,
-                    format: InstrFormat::R(tmp_dest),
+                    format: InstrFormat::R(tmp_dest_reg),
                 });
-                self.functions.get_mut(func_name).unwrap().take_back(dest);
                 self.functions
                     .get_mut(func_name)
                     .unwrap()
-                    .take_back_reg(tmp_dest);
+                    .take_back(tmp_dest);
             }
             _ => {
                 return Err(Error::from(CompError::InvalidStatement(

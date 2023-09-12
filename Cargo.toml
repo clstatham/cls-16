@@ -3,6 +3,17 @@ name = "cls16"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["clscc"]
+
+[[bin]]
+name = "cls16"
+path = "src/main.rs"
+
+[lib]
+name = "cls16"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = "1.0.75"
 bitflags = "2.4.0"

@@ -10,26 +10,26 @@ impl CompilerState {
             .functions
             .get_mut(func_name)
             .unwrap()
-            .push("cond", TypeSpecifier::Int);
+            .push(Some("cond"), TypeSpecifier::Int);
         self.compile_expr(&stmt.cond.item, Some(&cond), func_name)?;
         let nblocks = self.functions.get(func_name).unwrap().code.len();
         let if_block = Block::new(&format!("{func_name}if{nblocks}"));
         let else_block = Block::new(&format!("{func_name}else{nblocks}"));
         let end_block = Block::new(&format!("{func_name}end{nblocks}"));
 
-        let tmp_cond = self
+        let (tmp_cond_reg, tmp_cond) = self
             .functions
             .get_mut(func_name)
             .unwrap()
-            .any_reg()
+            .any_reg(TypeSpecifier::Int)
             .unwrap();
         {
             let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
             let cond_offset = cond.get_stack_offset().unwrap();
-            load_fp_offset_to_reg(tmp_cond, cond_offset, block);
+            load_fp_offset_to_reg(tmp_cond_reg, cond_offset, block);
             block.sequence.push(Instruction {
                 op: Opcode::Sub,
-                format: InstrFormat::RRR(Register::R0, tmp_cond, Register::R0),
+                format: InstrFormat::RRR(Register::R0, tmp_cond_reg, Register::R0),
             });
             block.sequence.push(Instruction {
                 op: Opcode::Jz,
@@ -43,7 +43,7 @@ impl CompilerState {
         self.functions
             .get_mut(func_name)
             .unwrap()
-            .take_back_reg(tmp_cond);
+            .take_back(tmp_cond);
 
         {
             let func = self.functions.get_mut(func_name).unwrap();

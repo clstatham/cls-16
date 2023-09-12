@@ -15,7 +15,7 @@ impl CompilerState {
                             .functions
                             .get_mut(func_name)
                             .unwrap()
-                            .get(name.item.0)
+                            .get_by_name(name.item.0)
                             .unwrap();
                         if let VarStorage::StackOffset(src_offset) = src.storage() {
                             match dest.storage() {
@@ -36,11 +36,11 @@ impl CompilerState {
                                     });
                                 }
                                 VarStorage::StackOffset(dest_offset) => {
-                                    let tmp_dest = self
+                                    let (tmp_dest_reg, tmp_dest) = self
                                         .functions
                                         .get_mut(func_name)
                                         .unwrap()
-                                        .any_reg()
+                                        .any_reg(dest.typ())
                                         .unwrap();
                                     {
                                         let block = self
@@ -48,21 +48,20 @@ impl CompilerState {
                                             .get_mut(func_name)
                                             .unwrap()
                                             .last_block_mut();
-                                        load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
-                                        block.sequence.push(Instruction {
-                                            op: Opcode::Mov,
-                                            format: InstrFormat::RR(tmp_dest, Register::FP),
-                                        });
                                         block.sequence.push(Instruction {
                                             op: Opcode::Add,
                                             format: InstrFormat::RRI(
-                                                tmp_dest,
-                                                tmp_dest,
+                                                tmp_dest_reg,
+                                                Register::FP,
                                                 Immediate::Linked(*src_offset),
                                             ),
                                         });
-                                        store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                        store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
                                     }
+                                    self.functions
+                                        .get_mut(func_name)
+                                        .unwrap()
+                                        .take_back(tmp_dest);
                                 }
                                 VarStorage::Immediate(_) => {
                                     return Err(Error::from(CompError::InvalidExpression(
@@ -87,7 +86,7 @@ impl CompilerState {
                 UnaryOp::Deref => {
                     self.compile_expr(&unary.item.expr.item, Some(dest), func_name)?;
                     let func = self.functions.get_mut(func_name).unwrap();
-                    let tmp_reg = func.any_reg().unwrap();
+                    let (tmp_reg, tmp) = func.any_reg(dest.typ()).unwrap();
 
                     match dest.storage() {
                         VarStorage::Register(dest_reg) => {
@@ -106,15 +105,15 @@ impl CompilerState {
                             });
                         }
                         VarStorage::StackOffset(dest_offset) => {
-                            let tmp_dest = func.any_reg().unwrap();
+                            let (tmp_dest_reg, tmp_dest) = func.any_reg(dest.typ()).unwrap();
                             {
                                 let block = func.last_block_mut();
-                                load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                                load_fp_offset_to_reg(tmp_dest_reg, *dest_offset, block);
                                 block.sequence.push(Instruction {
                                     op: Opcode::Ldl,
                                     format: InstrFormat::RRI(
                                         tmp_reg,
-                                        tmp_dest,
+                                        tmp_dest_reg,
                                         Immediate::Linked(0),
                                     ),
                                 });
@@ -122,17 +121,17 @@ impl CompilerState {
                                     op: Opcode::Ldh,
                                     format: InstrFormat::RRI(
                                         tmp_reg,
-                                        tmp_dest,
+                                        tmp_dest_reg,
                                         Immediate::Linked(1),
                                     ),
                                 });
                                 block.sequence.push(Instruction {
                                     op: Opcode::Mov,
-                                    format: InstrFormat::RR(tmp_dest, tmp_reg),
+                                    format: InstrFormat::RR(tmp_dest_reg, tmp_reg),
                                 });
-                                store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                                store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
                             }
-                            func.take_back_reg(tmp_dest);
+                            func.take_back(tmp_dest);
                         }
                         VarStorage::Immediate(_) => {
                             return Err(Error::from(CompError::InvalidExpression(
@@ -141,7 +140,7 @@ impl CompilerState {
                             )))
                         }
                     }
-                    func.take_back_reg(tmp_reg);
+                    func.take_back(tmp);
                 }
                 UnaryOp::Plus => todo!(),
                 UnaryOp::Minus => todo!(),
@@ -160,29 +159,19 @@ impl CompilerState {
                     | InfixOp::OrAssign
                     | InfixOp::XorAssign => {
                         // this holds the address of the pointer
-                        let dest_addr_reg = self
+                        let (dest_addr_reg, dest_addr) = self
                             .functions
                             .get_mut(func_name)
                             .unwrap()
-                            .any_reg()
+                            .any_reg(TypeSpecifier::Int)
                             .unwrap();
-                        let dest_addr = Var::new(
-                            TypeSpecifier::Int,
-                            "dest_addr",
-                            var::VarStorage::Register(dest_addr_reg),
-                        );
                         self.compile_expr(&infix.item.lhs.item, Some(&dest_addr), func_name)?;
-                        let rhs_reg = self
+                        let (rhs_reg, rhs) = self
                             .functions
                             .get_mut(func_name)
                             .unwrap()
-                            .any_reg()
+                            .any_reg(TypeSpecifier::Int)
                             .unwrap();
-                        let rhs = Var::new(
-                            TypeSpecifier::Int,
-                            "rhs",
-                            var::VarStorage::Register(rhs_reg),
-                        );
                         self.compile_expr(&infix.item.rhs.item, Some(&rhs), func_name)?;
 
                         let func = self.functions.get_mut(func_name).unwrap();
@@ -205,8 +194,8 @@ impl CompilerState {
                                 ),
                             });
                         }
-                        func.take_back_reg(rhs_reg);
-                        func.take_back_reg(dest_addr_reg);
+                        func.take_back(rhs);
+                        func.take_back(dest_addr);
                     }
                     _ => todo!(),
                 },

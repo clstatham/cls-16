@@ -26,7 +26,7 @@ impl CompilerState {
                 }
                 VarStorage::StackOffset(addr_offset) => {
                     let Constant::Integer(val) = val.item;
-                    let tmp_reg = func.any_reg().unwrap();
+                    let (tmp_reg, tmp) = func.any_reg(TypeSpecifier::Int).unwrap();
                     {
                         let block = func.last_block_mut();
                         block.sequence.push(Instruction {
@@ -35,7 +35,7 @@ impl CompilerState {
                         });
                         store_reg_to_fp_offset(*addr_offset, tmp_reg, block);
                     }
-                    func.take_back_reg(tmp_reg);
+                    func.take_back(tmp);
                 }
             }
         } else {

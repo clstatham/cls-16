@@ -12,32 +12,24 @@ impl CompilerState {
         let args_stack_size = n_args * 2;
 
         for (i, arg_expr) in args.iter().enumerate() {
-            let arg_reg = self
+            let (arg_reg, arg) = self
                 .functions
                 .get_mut(func_name)
                 .unwrap()
-                .any_reg()
+                .any_reg(TypeSpecifier::Int)
                 .unwrap();
-            let arg = Var::new(
-                TypeSpecifier::Int,
-                &format!("arg{}", i),
-                var::VarStorage::Register(arg_reg),
-            );
             self.compile_expr(&arg_expr.item, Some(&arg), func_name)?;
             push_reg_to_stack(
                 arg_reg,
                 self.functions.get_mut(func_name).unwrap().last_block_mut(),
             );
-            self.functions
-                .get_mut(func_name)
-                .unwrap()
-                .take_back_reg(arg_reg);
+            self.functions.get_mut(func_name).unwrap().take_back(arg);
         }
-        let ret_addr_reg = self
+        let (ret_addr_reg, ret_addr) = self
             .functions
             .get_mut(func_name)
             .unwrap()
-            .any_reg()
+            .any_reg(TypeSpecifier::Int)
             .unwrap();
         let nblock = self.functions.get(func_name).unwrap().code.len();
         let ret_addr_label = format!("{func_name}{}retaddr{}", func.item.0, nblock);
@@ -56,6 +48,10 @@ impl CompilerState {
                 format: InstrFormat::I(Immediate::Unlinked(func.item.0.to_owned())),
             });
         }
+        self.functions
+            .get_mut(func_name)
+            .unwrap()
+            .take_back(ret_addr);
         self.functions
             .get_mut(func_name)
             .unwrap()
@@ -85,25 +81,25 @@ impl CompilerState {
                     });
                 }
                 VarStorage::StackOffset(dest_offset) => {
-                    let tmp_dest = self
+                    let (tmp_dest_reg, tmp_dest) = self
                         .functions
                         .get_mut(func_name)
                         .unwrap()
-                        .any_reg()
+                        .any_reg(dest.typ())
                         .unwrap();
                     {
                         let block = self.functions.get_mut(func_name).unwrap().last_block_mut();
-                        load_fp_offset_to_reg(tmp_dest, *dest_offset, block);
+                        load_fp_offset_to_reg(tmp_dest_reg, *dest_offset, block);
                         block.sequence.push(Instruction {
                             op: Opcode::Mov,
-                            format: InstrFormat::RR(tmp_dest, Register::R1),
+                            format: InstrFormat::RR(tmp_dest_reg, Register::R1),
                         });
-                        store_reg_to_fp_offset(*dest_offset, tmp_dest, block);
+                        store_reg_to_fp_offset(*dest_offset, tmp_dest_reg, block);
                     }
                     self.functions
                         .get_mut(func_name)
                         .unwrap()
-                        .take_back_reg(tmp_dest);
+                        .take_back(tmp_dest);
                 }
                 VarStorage::Immediate(_) => {
                     return Err(Error::from(CompError::InvalidExpression(

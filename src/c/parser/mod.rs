@@ -202,9 +202,6 @@ pub fn infix_op<'a>(inp: WithSpan<'a, CToken<'a>>) -> (Precedence, Option<WithSp
                     item: InfixOp::Mod,
                 }),
             ),
-
-            Punctuator::OParen => (Precedence::Call, None),
-            Punctuator::OBrack => (Precedence::Index, None),
             _ => (Precedence::Lowest, None),
         }
     } else {
@@ -273,12 +270,39 @@ impl<'a> CallExpr<'a> {
     }
 }
 
+impl<'a> IndexExpr<'a> {
+    pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
+        map(
+            tuple((
+                Ident::parse,
+                delimited(punc_obrack, Expr::parse, punc_cbrack),
+            )),
+            |(arr, idx)| WithSpan {
+                span: arr.span,
+                item: IndexExpr {
+                    arr: WithSpan {
+                        span: arr.span,
+                        item: Expr::Ident(arr),
+                    },
+                    idx,
+                },
+            },
+        )(inp)
+    }
+}
+
 impl<'a> PostfixExpr<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
-        map(CallExpr::parse, |call| WithSpan {
-            span: call.span,
-            item: PostfixExpr::Call(call),
-        })(inp)
+        alt((
+            map(CallExpr::parse, |call| WithSpan {
+                span: call.span,
+                item: PostfixExpr::Call(call),
+            }),
+            map(IndexExpr::parse, |index| WithSpan {
+                span: index.span,
+                item: PostfixExpr::Index(index),
+            }),
+        ))(inp)
     }
 }
 
@@ -396,10 +420,13 @@ impl<'a> Expr<'a> {
 impl<'a> Declaration<'a> {
     pub fn parse(inp: Tokens<'a>) -> IResult<Tokens<'a>, WithSpan<Self>> {
         map(
-            tuple((TypedIdent::parse, punc_equals, Expr::parse, punc_semicolon)),
-            |(id, _, expr, _)| WithSpan {
-                span: id.span,
-                item: Declaration { id, expr },
+            tuple((TypeSpecifier::parse, Expr::parse, punc_semicolon)),
+            |(typ, expr, _)| WithSpan {
+                span: typ.span,
+                item: Declaration {
+                    typ,
+                    init_expr: expr,
+                },
             },
         )(inp)
     }
