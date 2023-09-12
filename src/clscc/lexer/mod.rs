@@ -11,7 +11,7 @@ use nom::{
 };
 use thiserror::Error;
 
-use crate::common::*;
+use crate::clscc::common::*;
 
 use self::gen::{lex_keyword, lex_punctuator};
 

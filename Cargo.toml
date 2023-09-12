@@ -3,9 +3,6 @@ name = "cls16"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-members = ["clscc"]
-
 [[bin]]
 name = "cls16"
 path = "src/main.rs"

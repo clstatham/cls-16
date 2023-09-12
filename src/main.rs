@@ -5,13 +5,13 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use asm::Assembler;
-use c::compiler::compile;
 use clap::{Parser, Subcommand};
+use clscc::{cg::Codegen, common::Tokens, lexer::lex, parser::AstNode};
 use emu::emulator::Emulator;
 use simplelog::*;
 
 pub mod asm;
-pub mod c;
+pub mod clscc;
 pub mod emu;
 pub mod plat;
 
@@ -58,7 +58,7 @@ struct Args {
 fn main() -> Result<()> {
     CombinedLogger::init(vec![TermLogger::new(
         #[cfg(debug_assertions)]
-        LevelFilter::Debug,
+        LevelFilter::Trace,
         #[cfg(not(debug_assertions))]
         LevelFilter::Info,
         Config::default(),
@@ -70,7 +70,10 @@ fn main() -> Result<()> {
     match args.command {
         Command::Compile(args) => {
             let c_program = std::fs::read_to_string(&args.input)?;
-            let program = compile(&c_program, args.opt_level)?;
+            let tokens = lex(&c_program)?;
+            let mut root = AstNode::parse(Tokens::new(&tokens))?;
+            let mut cg = Codegen::new();
+            let program = cg.gen(&mut root)?;
             if args.emit_asm {
                 let output = args.input.with_extension("s");
                 std::fs::write(output, &program)?;

@@ -1,5 +1,5 @@
-use super::{Ast, AstNode};
-use crate::common::*;
+use crate::clscc::common::*;
+use crate::clscc::parser::{Ast, AstNode, Tokens};
 use nom::bytes::complete::*;
 use nom::combinator::*;
 use nom::IResult;
@@ -100,5 +100,3 @@ tag_token! { kw_unsigned, Keyword, Unsigned }
 tag_token! { kw_void, Keyword, Void }
 tag_token! { kw_volatile, Keyword, Volatile }
 tag_token! { kw_while, Keyword, While }
-// added for CLS-16
-tag_token! { kw_printi, Keyword, Printi }

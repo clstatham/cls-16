@@ -8,7 +8,7 @@ use nom::{
 };
 use thiserror::Error;
 
-use crate::common::*;
+use super::common::*;
 
 pub mod gen;
 use self::gen::*;
@@ -45,7 +45,7 @@ impl ParseError {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Type<'a> {
+pub enum Type {
     Void,
     Char,
     Short,
@@ -55,19 +55,42 @@ pub enum Type<'a> {
     Double,
     Signed,
     Unsigned,
-    Struct(&'a str),
-    Union(&'a str),
-    Enum(&'a str),
-    Typedef(&'a str),
-    Pointer(Box<Type<'a>>),
-    Array(Box<Type<'a>>, Box<AstNode<'a>>),
-    Function(Box<Type<'a>>, Vec<Type<'a>>),
+    Struct(String),
+    Union(String),
+    Enum(String),
+    Typedef(String),
+    Pointer(Box<Type>),
+    Array(Box<Type>, usize),
+    Function(Box<Type>, Vec<Type>),
+}
+
+impl Type {
+    pub fn sizeof(&self) -> usize {
+        match self {
+            Type::Void => 0,
+            Type::Char => 1,
+            Type::Short => 2,
+            Type::Int => 4,
+            Type::Long => 8,
+            Type::Float => 4,
+            Type::Double => 8,
+            Type::Signed => 4,
+            Type::Unsigned => 4,
+            Type::Struct(_) => 0,
+            Type::Union(_) => 0,
+            Type::Enum(_) => 4,
+            Type::Typedef(_) => 0,
+            Type::Pointer(_) => 8,
+            Type::Array(ty, len) => ty.sizeof() * len,
+            Type::Function(_, _) => 0,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct AstNode<'a> {
     // The type that this node evaluates to.
-    pub typ: Option<Type<'a>>,
+    pub typ: Option<Type>,
     // Whether this node is an rvalue or lvalue.
     pub rvalue: bool,
     pub ast: Box<Ast<'a>>,
@@ -77,7 +100,7 @@ impl<'a> AstNode<'a> {
     /// Creates a new AstNode with the given Ast and Type.
     ///
     /// The node will be assummed to be an lvalue, meaning that its result will be kept after the node is translated to assembly.
-    pub fn new(ast: Ast<'a>, typ: Option<Type<'a>>) -> Self {
+    pub fn new(ast: Ast<'a>, typ: Option<Type>) -> Self {
         Self {
             ast: Box::new(ast),
             typ,
@@ -88,7 +111,7 @@ impl<'a> AstNode<'a> {
     /// Creates a new AstNode with the given Ast and Type.
     ///
     /// The node will be assummed to be an rvalue, meaning that its result will be discarded after the node is translated to assembly.
-    pub fn new_rvalue(ast: Ast<'a>, typ: Option<Type<'a>>) -> Self {
+    pub fn new_rvalue(ast: Ast<'a>, typ: Option<Type>) -> Self {
         Self {
             ast: Box::new(ast),
             typ,
@@ -163,12 +186,10 @@ pub enum Ast<'a> {
         member: AstNode<'a>,
     },
     Cast {
-        ty: AstNode<'a>,
         expr: AstNode<'a>,
     },
     Sizeof(AstNode<'a>),
     Declaration {
-        ty: Vec<AstNode<'a>>,
         decl: Vec<AstNode<'a>>,
     },
 }
@@ -253,12 +274,12 @@ impl<'a> AstNode<'a> {
         })(inp)?;
         log::trace!("Out Ast::parse_string_literal");
         if let TokenVariant::String(s) = &t.tok[0].variant {
-            let len = AstNode::new_rvalue(Ast::Integer(s.len() as i64), Some(Type::Int));
+            // let len = AstNode::new_rvalue(Ast::Integer(s.len() as i64), Some(Type::Int));
             Ok((
                 inp,
                 AstNode::new_rvalue(
                     Ast::StringLiteral(s.to_owned()),
-                    Some(Type::Array(Box::new(Type::Char), Box::new(len))),
+                    Some(Type::Array(Box::new(Type::Char), s.len())),
                 ),
             ))
         } else {
@@ -277,10 +298,40 @@ impl<'a> AstNode<'a> {
 
     fn parse_postfix_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_primary_expr(inp)?;
+        if let Ok((inp, _)) = punc_oparen(inp.clone()) {
+            // call expr
+            let (inp, args) = separated_list1(punc_comma, Self::parse_expr)(inp)?;
+            let (inp, _) = punc_cparen(inp)?;
+            log::trace!("Out Ast::parse_postfix_expr (call)");
+            return Ok((
+                inp,
+                AstNode::new_rvalue(
+                    Ast::Call {
+                        name: lhs.to_owned(),
+                        args,
+                    },
+                    lhs.typ,
+                ),
+            ));
+        } else if let Ok((inp, _)) = punc_obrack(inp.clone()) {
+            // index expr
+            let (inp, index) = Self::parse_expr(inp)?;
+            let (inp, _) = punc_cbrack(inp)?;
+            log::trace!("Out Ast::parse_postfix_expr (index)");
+            return Ok((
+                inp,
+                AstNode::new_rvalue(
+                    Ast::Index {
+                        name: lhs.to_owned(),
+                        index,
+                    },
+                    lhs.typ,
+                ),
+            ));
+        }
         let (inp, res) = many0(alt((
             tuple((punc_period, Self::parse_ident)),
-            tuple((punc_obrack, terminated(Self::parse_expr, punc_cbrack))),
-            tuple((punc_oparen, terminated(Self::parse_expr, punc_cparen))),
+            tuple((punc_rarrow, Self::parse_ident)),
             tuple((punc_plusplus, Self::parse_ident)),
             tuple((punc_minusminus, Self::parse_ident)),
         )))(inp)?;
@@ -290,23 +341,17 @@ impl<'a> AstNode<'a> {
                     variant: TokenVariant::Punctuator(punc),
                     ..
                 }) => match punc {
-                    Punctuator::Period => match lhs.typ.as_ref().unwrap() {
-                        Type::Struct(_) | Type::Union(_) => rhs.typ,
+                    Punctuator::Period => match lhs.typ.as_ref() {
+                        Some(Type::Struct(_) | Type::Union(_)) => rhs.typ,
+                        None => None,
                         _ => unreachable!(),
                     },
-                    Punctuator::RArrow => match lhs.typ.as_ref().unwrap() {
-                        Type::Pointer(ty) => match **ty {
+                    Punctuator::RArrow => match lhs.typ.as_ref() {
+                        Some(Type::Pointer(ty)) => match **ty {
                             Type::Struct(_) | Type::Union(_) => rhs.typ,
                             _ => unreachable!(),
                         },
-                        _ => unreachable!(),
-                    },
-                    Punctuator::OBrack => match lhs.typ.as_ref().unwrap() {
-                        Type::Array(ty, _) => Some(*ty.to_owned()),
-                        _ => unreachable!(),
-                    },
-                    Punctuator::OParen => match lhs.typ.as_ref().unwrap() {
-                        Type::Function(ty, _) => Some(*ty.to_owned()),
+                        None => None,
                         _ => unreachable!(),
                     },
                     _ => None,
@@ -329,15 +374,7 @@ impl<'a> AstNode<'a> {
                     punc_cparen,
                     Self::parse_cast_expr,
                 )),
-                |(_, ty, _, expr)| {
-                    AstNode::new_rvalue(
-                        Ast::Cast {
-                            ty: ty.to_owned(),
-                            expr,
-                        },
-                        ty.typ,
-                    )
-                },
+                |(_, ty, _, mut expr)| AstNode::new_rvalue(Ast::Cast { expr }, ty.typ),
             ),
         ))(inp)
     }
@@ -373,9 +410,9 @@ impl<'a> AstNode<'a> {
                     Keyword::Double => Type::Double,
                     Keyword::Signed => Type::Signed,
                     Keyword::Unsigned => Type::Unsigned,
-                    Keyword::Struct => Type::Struct(""),
-                    Keyword::Union => Type::Union(""),
-                    Keyword::Enum => Type::Enum(""),
+                    Keyword::Struct => Type::Struct("".to_owned()),
+                    Keyword::Union => Type::Union("".to_owned()),
+                    Keyword::Enum => Type::Enum("".to_owned()),
                     _ => unreachable!(),
                 });
             }
@@ -442,7 +479,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_fslash, Self::parse_cast_expr)),
             tuple((punc_percent, Self::parse_cast_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -462,7 +500,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_plus, Self::parse_multiplicative_expr)),
             tuple((punc_minus, Self::parse_multiplicative_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -482,7 +521,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_ltlt, Self::parse_additive_expr)),
             tuple((punc_gtgt, Self::parse_additive_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -504,7 +544,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_lteq, Self::parse_shift_expr)),
             tuple((punc_gteq, Self::parse_shift_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -524,7 +565,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_eqeq, Self::parse_relational_expr)),
             tuple((punc_bangeq, Self::parse_relational_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -541,7 +583,8 @@ impl<'a> AstNode<'a> {
     fn parse_and_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_equality_expr(inp)?;
         let (inp, res) = many0(tuple((punc_ampersand, Self::parse_equality_expr)))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -558,7 +601,8 @@ impl<'a> AstNode<'a> {
     fn parse_exclusive_or_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_and_expr(inp)?;
         let (inp, res) = many0(tuple((punc_caret, Self::parse_and_expr)))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -575,7 +619,8 @@ impl<'a> AstNode<'a> {
     fn parse_inclusive_or_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_exclusive_or_expr(inp)?;
         let (inp, res) = many0(tuple((punc_bar, Self::parse_exclusive_or_expr)))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -592,7 +637,8 @@ impl<'a> AstNode<'a> {
     fn parse_logical_and_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_inclusive_or_expr(inp)?;
         let (inp, res) = many0(tuple((punc_andand, Self::parse_inclusive_or_expr)))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -609,7 +655,8 @@ impl<'a> AstNode<'a> {
     fn parse_logical_or_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
         let (inp, lhs) = Self::parse_logical_and_expr(inp)?;
         let (inp, res) = many0(tuple((punc_barbar, Self::parse_logical_and_expr)))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             AstNode::new_rvalue(
                 Ast::Binary {
                     op,
@@ -660,7 +707,8 @@ impl<'a> AstNode<'a> {
             tuple((punc_careteq, Self::parse_assignment_expr)),
             tuple((punc_bareq, Self::parse_assignment_expr)),
         )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
+        let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
+            rhs.rvalue = true;
             // assignment expressions are assumed to be lvalues by default
             AstNode::new(
                 Ast::Binary {
@@ -684,7 +732,7 @@ impl<'a> AstNode<'a> {
         let (inp, decl) = Self::parse_init_declarator_list(inp, &ty)?;
         let (inp, _) = punc_semicolon(inp)?;
         log::trace!("Out Ast::parse_declaration");
-        Ok((inp, AstNode::new(Ast::Declaration { ty, decl }, None)))
+        Ok((inp, AstNode::new(Ast::Declaration { decl }, None)))
     }
 
     fn parse_declaration_specifiers(inp: Tokens<'a>) -> IResult<Tokens<'a>, Vec<Self>> {
@@ -719,9 +767,9 @@ impl<'a> AstNode<'a> {
                         Keyword::Double => Type::Double,
                         Keyword::Signed => Type::Signed,
                         Keyword::Unsigned => Type::Unsigned,
-                        Keyword::Struct => Type::Struct(""),
-                        Keyword::Union => Type::Union(""),
-                        Keyword::Enum => Type::Enum(""),
+                        Keyword::Struct => Type::Struct("".to_owned()),
+                        Keyword::Union => Type::Union("".to_owned()),
+                        Keyword::Enum => Type::Enum("".to_owned()),
                         _ => unreachable!(),
                     });
                 }
@@ -767,12 +815,16 @@ impl<'a> AstNode<'a> {
         decl.typ = ty.typ.to_owned();
         let (inp, mut decl) = if let Ok((inp, _)) = punc_obrack(inp.to_owned()) {
             let (inp, len) = Self::parse_expr(inp)?;
-            let (inp, _) = punc_cbrack(inp)?;
-            decl.typ = Some(Type::Array(
-                Box::new(decl.typ.as_ref().unwrap().to_owned()),
-                Box::new(len),
-            ));
-            (inp, decl)
+            if let Ast::Integer(len) = *len.ast.as_ref() {
+                let (inp, _) = punc_cbrack(inp)?;
+                decl.typ = Some(Type::Array(
+                    Box::new(decl.typ.as_ref().unwrap().to_owned()),
+                    len as usize,
+                ));
+                (inp, decl)
+            } else {
+                unreachable!()
+            }
         } else {
             (inp, decl)
         };
