@@ -8,6 +8,18 @@ pub mod call;
 pub mod mem;
 
 impl Codegen {
+    pub(crate) fn cga_start_prelude(&mut self) -> Result<()> {
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Mov,
+            format: InstrFormat::RI(Register::FP, Immediate::Linked(0xf000)),
+        });
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Mov,
+            format: InstrFormat::RR(Register::SP, Register::FP),
+        });
+        Ok(())
+    }
+
     pub(crate) fn cga_halt(&mut self) -> Result<()> {
         self.current_scope.push_instr(Instruction {
             op: Opcode::Halt,

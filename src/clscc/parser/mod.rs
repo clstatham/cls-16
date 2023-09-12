@@ -260,7 +260,7 @@ impl<'a> AstNode<'a> {
         })(inp)?;
         log::trace!("Out Ast::parse_constant");
         if let TokenVariant::Integer(val) = t.tok[0].variant {
-            Ok((inp, AstNode::new_rvalue(Ast::Integer(val), Some(Type::Int))))
+            Ok((inp, AstNode::new(Ast::Integer(val), Some(Type::Int))))
         } else {
             unreachable!()
         }
@@ -277,7 +277,7 @@ impl<'a> AstNode<'a> {
             // let len = AstNode::new_rvalue(Ast::Integer(s.len() as i64), Some(Type::Int));
             Ok((
                 inp,
-                AstNode::new_rvalue(
+                AstNode::new(
                     Ast::StringLiteral(s.to_owned()),
                     Some(Type::Array(Box::new(Type::Char), s.len())),
                 ),
@@ -481,7 +481,7 @@ impl<'a> AstNode<'a> {
         )))(inp)?;
         let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
             rhs.rvalue = true;
-            AstNode::new_rvalue(
+            AstNode::new(
                 Ast::Binary {
                     op,
                     lhs: lhs.to_owned(),
@@ -502,7 +502,7 @@ impl<'a> AstNode<'a> {
         )))(inp)?;
         let res = res.into_iter().fold(lhs, |lhs, (op, mut rhs)| {
             rhs.rvalue = true;
-            AstNode::new_rvalue(
+            AstNode::new(
                 Ast::Binary {
                     op,
                     lhs: lhs.to_owned(),

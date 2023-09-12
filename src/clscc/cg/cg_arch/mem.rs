@@ -1,10 +1,7 @@
 use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
-use crate::clscc::{
-    cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage},
-    parser::Type,
-};
+use crate::clscc::cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage};
 
 impl Codegen {
     pub(crate) fn cga_push_stack(&mut self, value: Value) -> Result<Value> {

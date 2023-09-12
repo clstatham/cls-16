@@ -367,7 +367,7 @@ impl Codegen {
     }
 
     pub fn gen(&mut self, root: &mut AstNode<'_>) -> Result<String> {
-        let root_val = self.dfs_walk(root)?;
+        self.dfs_walk(root)?;
         let mut lines = vec![];
         for scope in self.scopes.values() {
             for block in scope.blocks.borrow().iter() {
@@ -493,6 +493,9 @@ impl Codegen {
                 self.current_scope.insert_label("printi");
                 self.current_scope
                     .push_block(name_val.ident().unwrap().to_owned());
+                if name == "start" {
+                    self.cga_start_prelude()?;
+                }
                 for param in param_names {
                     let val = self.cga_pop_stack()?;
                     self.current_scope.insert(
@@ -501,10 +504,41 @@ impl Codegen {
                         val.storage().clone(),
                     );
                 }
+                self.current_scope.push_block(format!("{}body", name));
                 let body = self.dfs_walk(body)?;
+                {
+                    let mut blocks = self.current_scope.blocks.borrow_mut();
+                    blocks.first_mut().unwrap().sequence.extend_from_slice(&[
+                        BlockElem::Instruction(Instruction {
+                            op: Opcode::Sub,
+                            format: InstrFormat::RRI(
+                                Register::FP,
+                                Register::FP,
+                                Immediate::Linked(self.current_scope.stack_offset() as u16),
+                            ),
+                        }),
+                        BlockElem::Instruction(Instruction {
+                            op: Opcode::Mov,
+                            format: InstrFormat::RR(Register::SP, Register::FP),
+                        }),
+                    ]);
+                }
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Add,
+                    format: InstrFormat::RRI(
+                        Register::FP,
+                        Register::FP,
+                        Immediate::Linked(self.current_scope.stack_offset() as u16),
+                    ),
+                });
+                self.current_scope.push_instr(Instruction {
+                    op: Opcode::Mov,
+                    format: InstrFormat::RR(Register::SP, Register::FP),
+                });
                 if name == "start" {
                     self.cga_halt()?;
                 }
+
                 self.pop_scope();
                 Ok(None)
             }

@@ -4,12 +4,28 @@ use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 use crate::clscc::cg::{Codegen, Value, ValueStorage};
 
 impl Codegen {
-    pub fn cga_add(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+    pub(crate) fn cga_add(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(lhs, rhs, Opcode::Add)
+    }
+
+    pub(crate) fn cga_sub(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(lhs, rhs, Opcode::Sub)
+    }
+
+    pub(crate) fn cga_mul(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(lhs, rhs, Opcode::Mul)
+    }
+
+    pub(crate) fn cga_div(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(lhs, rhs, Opcode::Div)
+    }
+
+    fn cga_arith(&mut self, lhs: Value, rhs: Value, op: Opcode) -> Result<Value> {
         let result = self.current_scope.any_register()?;
         match (lhs.storage(), rhs.storage()) {
             (ValueStorage::Register(lhs), ValueStorage::Register(rhs)) => {
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRR(result.get_register()?, *lhs, *rhs),
                 });
                 Ok(result)
@@ -32,14 +48,14 @@ impl Codegen {
                     ),
                 });
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRR(result.get_register()?, *lhs, result.get_register()?),
                 });
                 Ok(result)
             }
             (ValueStorage::Register(lhs), ValueStorage::Immediate(rhs)) => {
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRI(result.get_register()?, *lhs, rhs.to_owned()),
                 });
                 Ok(result)
@@ -62,7 +78,7 @@ impl Codegen {
                     ),
                 });
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRR(result.get_register()?, result.get_register()?, *rhs),
                 });
                 Ok(result)
@@ -104,7 +120,7 @@ impl Codegen {
                 });
 
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRR(
                         result.get_register()?,
                         result.get_register()?,
@@ -134,7 +150,7 @@ impl Codegen {
                     ),
                 });
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRI(
                         result.get_register()?,
                         result.get_register()?,
@@ -145,7 +161,7 @@ impl Codegen {
             }
             (ValueStorage::Immediate(lhs), ValueStorage::Register(rhs)) => {
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRI(result.get_register()?, *rhs, lhs.to_owned()),
                 });
                 Ok(result)
@@ -168,7 +184,7 @@ impl Codegen {
                     ),
                 });
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRI(
                         result.get_register()?,
                         result.get_register()?,
@@ -179,15 +195,11 @@ impl Codegen {
             }
             (ValueStorage::Immediate(lhs), ValueStorage::Immediate(rhs)) => {
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
-                    format: InstrFormat::RRI(
-                        result.get_register()?,
-                        result.get_register()?,
-                        lhs.to_owned(),
-                    ),
+                    op: Opcode::Mov,
+                    format: InstrFormat::RI(result.get_register()?, lhs.to_owned()),
                 });
                 self.current_scope.push_instr(Instruction {
-                    op: Opcode::Add,
+                    op,
                     format: InstrFormat::RRI(
                         result.get_register()?,
                         result.get_register()?,
