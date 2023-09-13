@@ -14,7 +14,6 @@ impl Codegen {
         rhs: &AstNode<'_>,
         parent: Option<&AstNode<'_>>,
     ) -> Result<Option<Value>> {
-        self.push_scope("binary".to_string());
         // self.push_scope("lhs".to_string());
         let lhs = self.dfs_walk(lhs, parent, false)?.unwrap();
         // self.pop_scope();
@@ -22,7 +21,7 @@ impl Codegen {
         let rhs = self.dfs_walk(rhs, parent, true)?.unwrap();
 
         // self.pop_scope();
-
+        self.push_scope("binary".to_string());
         let res = if let Ast::Token(op) = &*op.ast {
             if let TokenVariant::Punctuator(op) = op.variant {
                 match op {

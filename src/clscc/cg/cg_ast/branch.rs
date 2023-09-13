@@ -27,4 +27,17 @@ impl Codegen {
 
         Ok(None)
     }
+
+    pub(crate) fn cg_for(
+        &mut self,
+        init: &AstNode<'_>,
+        cond: &AstNode<'_>,
+        step: &AstNode<'_>,
+        body: &AstNode<'_>,
+        parent: Option<&AstNode<'_>>,
+    ) -> Result<Option<Value>> {
+        self.cga_for(init, cond, step, body, parent)?;
+
+        Ok(None)
+    }
 }

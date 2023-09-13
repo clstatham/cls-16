@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Error, Result};
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
+use nom::Err;
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
@@ -397,11 +398,9 @@ impl Codegen {
                 BlockElem::Comment(comment) => {
                     lines.push(format!("{}; {}", " ".repeat(depth * 2), comment))
                 }
-                BlockElem::Label(label) => {
-                    lines.push(format!("{}%{}", " ".repeat((depth - 1) * 2), label))
-                }
+                BlockElem::Label(label) => lines.push(format!("%{}", label)),
                 BlockElem::Subscope(scope) => {
-                    lines.push(format!("{}%{}", " ".repeat(depth * 2), scope.label));
+                    lines.push(format!("%{}", scope.label));
                     Self::recursive_gen(scope, lines, depth + 1)
                 }
             }
@@ -511,13 +510,7 @@ impl Codegen {
                 cond,
                 step,
                 body,
-            } => {
-                let init = self.dfs_walk(init, Some(node), rvalue)?;
-                let cond = self.dfs_walk(cond, Some(node), rvalue)?;
-                let step = self.dfs_walk(step, Some(node), rvalue)?;
-                let body = self.dfs_walk(body, Some(node), rvalue)?;
-                todo!()
-            }
+            } => self.cg_for(init, cond, step, body, Some(node)),
             Ast::FunctionDef { name, params, body } => {
                 let (name, name_val) = if let Ast::Ident(name) = &*name.ast {
                     if let TokenVariant::Ident(name) = &name.variant {
@@ -738,9 +731,60 @@ impl Codegen {
                 Ok(None)
             }
             Ast::Unary { op, rhs } => {
-                let op = self.dfs_walk(op, Some(node), rvalue)?;
-                let rhs = self.dfs_walk(rhs, Some(node), rvalue)?;
-                todo!()
+                let rhs = self.dfs_walk(rhs, Some(node), rvalue)?.unwrap();
+                if let Ast::Token(op) = &*op.ast {
+                    if let TokenVariant::Punctuator(op) = op.variant {
+                        match op {
+                            Punctuator::Ampersand => {
+                                let result = self.current_scope.any_register(Some(
+                                    Type::Pointer(Some(Box::new(rhs.ty().cloned().unwrap()))),
+                                ))?;
+                                let result = self.cga_addrof(result, rhs.clone())?;
+                                Ok(Some(result))
+                            }
+                            Punctuator::Star => {
+                                if let Some(Type::Pointer(pointed_ty)) = rhs.ty() {
+                                    if rvalue {
+                                        log::trace!("Loading pointer");
+                                        let result = self.current_scope.any_register(
+                                            pointed_ty.as_ref().map(|p| *p.to_owned()),
+                                        )?;
+                                        let tmp_rhs =
+                                            self.current_scope.any_register(rhs.ty().cloned())?;
+                                        self.cga_store(tmp_rhs.clone(), rhs.clone())?;
+                                        self.cga_load(result.clone(), tmp_rhs.clone())?;
+                                        Ok(Some(result))
+                                    } else {
+                                        log::trace!("Not loading pointer");
+                                        Ok(Some(rhs))
+                                    }
+                                } else {
+                                    Err(Error::new(CodegenError::new(CodegenErrorKind::Expected {
+                                        expected: vec!["pointer".to_owned()],
+                                        got: format!("{:?}", rhs.ty().cloned()),
+                                    })))
+                                }
+                            }
+                            Punctuator::Plus => Ok(Some(rhs)),
+                            _ => todo!(),
+                        }
+                    } else {
+                        Err(Error::new(CodegenError::new(
+                            CodegenErrorKind::ExpectedToken {
+                                expected: vec![
+                                    TokenVariant::Punctuator(Punctuator::PlusPlus),
+                                    TokenVariant::Punctuator(Punctuator::MinusMinus),
+                                ],
+                                got: op.variant.clone(),
+                            },
+                        )))
+                    }
+                } else {
+                    Err(Error::new(CodegenError::new(CodegenErrorKind::Expected {
+                        expected: vec!["token".to_owned()],
+                        got: String::new(),
+                    })))
+                }
             }
             Ast::While { cond, body } => self.cg_while(cond, body, Some(node)),
         }

@@ -59,7 +59,7 @@ pub enum Type {
     Union(String),
     Enum(String),
     Typedef(String),
-    Pointer(Box<Type>),
+    Pointer(Option<Box<Type>>),
     Array(Box<Type>, usize),
     Function(Box<Type>, Vec<Type>),
 }
@@ -428,7 +428,7 @@ impl<'a> AstNode<'a> {
     }
 
     fn parse_unary_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {
-        let (inp, res) = many0(alt((
+        if let Ok((inp, (op, rhs))) = alt((
             tuple((punc_ampersand, Self::parse_unary_expr)),
             tuple((punc_star, Self::parse_unary_expr)),
             tuple((punc_plusplus, Self::parse_unary_expr)),
@@ -438,39 +438,36 @@ impl<'a> AstNode<'a> {
             tuple((punc_tilde, Self::parse_unary_expr)),
             tuple((punc_bang, Self::parse_unary_expr)),
             tuple((kw_sizeof, Self::parse_unary_expr)),
-        )))(inp)?;
-        let out = res.into_iter().fold(None, |lhs, (op, rhs)| {
-            let typ = match *op.ast {
-                Ast::Token(Token {
-                    variant: TokenVariant::Keyword(kw),
-                    ..
-                }) => match kw {
-                    Keyword::Sizeof => Some(Type::Int),
-                    _ => unreachable!(),
-                },
-                Ast::Token(Token {
-                    variant: TokenVariant::Punctuator(punc),
-                    ..
-                }) => match punc {
-                    Punctuator::Ampersand => Some(Type::Pointer(Box::new(
-                        rhs.typ.as_ref().unwrap().to_owned(),
-                    ))),
-                    Punctuator::Star => match rhs.typ.as_ref().unwrap() {
-                        Type::Pointer(ty) => Some(*ty.to_owned()),
+        ))(inp.clone())
+        {
+            let out = {
+                let typ = match *op.ast {
+                    Ast::Token(Token {
+                        variant: TokenVariant::Keyword(kw),
+                        ..
+                    }) => match kw {
+                        Keyword::Sizeof => Some(Type::Int),
                         _ => unreachable!(),
                     },
+                    Ast::Token(Token {
+                        variant: TokenVariant::Punctuator(punc),
+                        ..
+                    }) => match punc {
+                        Punctuator::Ampersand => Some(Type::Pointer(
+                            rhs.typ.as_ref().map(|ty| Box::new(ty.to_owned())),
+                        )),
+                        Punctuator::Star => match rhs.typ.as_ref() {
+                            Some(Type::Pointer(ty)) => ty.as_ref().map(|t| *t.to_owned()),
+                            None => None,
+                            _ => unreachable!(),
+                        },
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
+                };
+                AstNode::new(Ast::Unary { op, rhs }, typ)
             };
-            let rhs = match lhs {
-                None => rhs,
-                Some(lhs) => AstNode::new(Ast::Unary { op, rhs: lhs }, typ),
-            };
-            Some(rhs)
-        });
-        if let Some(out) = out {
-            log::trace!("Out Ast::parse_unary_expr");
+            log::trace!("Out Ast::parse_unary_expr with {:?}", out.typ);
             Ok((inp, out))
         } else {
             Self::parse_postfix_expr(inp)
@@ -834,9 +831,9 @@ impl<'a> AstNode<'a> {
             (inp, decl)
         };
         for _ in ptr {
-            decl.typ = Some(Type::Pointer(Box::new(
-                decl.typ.as_ref().unwrap().to_owned(),
-            )));
+            decl.typ = Some(Type::Pointer(
+                decl.typ.as_ref().map(|t| Box::new(t.to_owned())),
+            ));
         }
         log::trace!("Out Ast::parse_declarator");
         Ok((inp, decl))

@@ -1,8 +1,9 @@
 void start() {
-  int i;
-  i = 100;
-  while (i > 10) {
-    i--;
-    printi(i);
-  }
+  int *p;
+  int a;
+  a = 42;
+  p = &a;
+  printi(*p);
+  *p = 43;
+  printi(a);
 }

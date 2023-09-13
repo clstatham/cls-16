@@ -49,14 +49,14 @@ impl Codegen {
     pub(crate) fn cga_index(&mut self, arr: Value, index: Value, rvalue: bool) -> Result<Value> {
         let elem_ty = match arr.ty().unwrap() {
             Type::Array(ty, _) => ty.to_owned(),
-            Type::Pointer(ty) => ty.to_owned(),
+            Type::Pointer(ty) => ty.to_owned().unwrap(),
             _ => unreachable!(),
         };
 
         let arr_offset = arr.get_stack_offset()?;
         let index_val = self
             .current_scope
-            .any_register(Some(Type::Pointer(elem_ty.clone())))?;
+            .any_register(Some(Type::Pointer(Some(elem_ty.clone()))))?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Mov,
             format: InstrFormat::RI(
@@ -131,9 +131,44 @@ impl Codegen {
         }
     }
 
+    pub(crate) fn cga_addrof(&mut self, result: Value, rhs: Value) -> Result<Value> {
+        let rhs_offset = rhs.get_stack_offset()?;
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Add,
+            format: InstrFormat::RRI(
+                result.get_register()?,
+                Register::FP,
+                Immediate::Linked(rhs_offset as u16),
+            ),
+        });
+        Ok(result)
+    }
+
+    pub(crate) fn cga_load(&mut self, result: Value, pointer: Value) -> Result<Value> {
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Ldl,
+            format: InstrFormat::RRI(
+                result.get_register()?,
+                pointer.get_register()?,
+                Immediate::Linked(0),
+            ),
+        });
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Ldh,
+            format: InstrFormat::RRI(
+                result.get_register()?,
+                pointer.get_register()?,
+                Immediate::Linked(1),
+            ),
+        });
+        Ok(result)
+    }
+
     fn cga_store_ptr(&mut self, ptr: Value, rhs: Value) -> Result<Value> {
-        let ptr_reg = ptr.get_register()?;
-        match rhs.storage() {
+        let tmp_reg = self.current_scope.any_register(ptr.ty().cloned())?;
+        let tmp_reg = self.cga_store(tmp_reg, ptr.clone())?;
+        let ptr_reg = tmp_reg.get_register()?;
+        let res = match rhs.storage() {
             ValueStorage::Register(rhs_reg) => {
                 log::trace!("store ptr: register");
                 self.current_scope.push_instr(Instruction {
@@ -211,13 +246,24 @@ impl Codegen {
 
                 Ok(ptr)
             }
-        }
+        };
+        self.current_scope.retake(tmp_reg);
+        res
     }
 
     pub(crate) fn cga_store(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
         assert!(!lhs.rvalue());
-        if let Some(Type::Pointer(_)) = lhs.ty() {
-            return self.cga_store_ptr(lhs, rhs);
+        match (lhs.ty(), rhs.ty()) {
+            (Some(Type::Pointer(_)), Some(Type::Pointer(_))) => {
+                log::trace!("store: ptr -> ptr");
+            }
+            (Some(Type::Pointer(_)), t) => {
+                log::trace!("store: {t:?} -> ptr");
+                return self.cga_store_ptr(lhs, rhs);
+            }
+            _ => {
+                log::trace!("store: _ -> _");
+            }
         }
         match (lhs.storage(), rhs.storage()) {
             (ValueStorage::Register(dest), ValueStorage::Register(src)) => {
