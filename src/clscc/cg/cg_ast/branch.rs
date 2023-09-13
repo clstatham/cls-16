@@ -17,4 +17,14 @@ impl Codegen {
         self.cga_if_else(cond, then, els)?;
         Ok(None)
     }
+
+    pub(crate) fn cg_while(
+        &mut self,
+        cond: &mut AstNode<'_>,
+        body: &mut AstNode<'_>,
+    ) -> Result<Option<Value>> {
+        self.cga_while(cond, body)?;
+
+        Ok(None)
+    }
 }

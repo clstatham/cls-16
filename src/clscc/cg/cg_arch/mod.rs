@@ -4,6 +4,7 @@ use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 use crate::clscc::cg::{Codegen, Value, ValueStorage};
 
 pub mod arith;
+pub mod boolean;
 pub mod branch;
 pub mod call;
 pub mod mem;

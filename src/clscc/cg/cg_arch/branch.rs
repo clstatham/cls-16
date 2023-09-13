@@ -17,21 +17,9 @@ impl Codegen {
     ) -> Result<()> {
         let cond_reg = self.current_scope.any_register(Some(Type::Int))?;
         self.cga_store(cond_reg.clone(), cond)?;
-        let then_label = format!(
-            "{}then{}",
-            self.current_scope.label,
-            self.current_scope.num_children()
-        );
-        let els_label = format!(
-            "{}els{}",
-            self.current_scope.label,
-            self.current_scope.num_children()
-        );
-        let end_label = format!(
-            "{}end{}",
-            self.current_scope.label,
-            self.current_scope.num_children()
-        );
+        let then_label = "then".to_string();
+        let els_label = "els".to_string();
+        let end_label = "end".to_string();
 
         // compare the boolean condition to 0
         self.current_scope.push_instr(Instruction {
@@ -76,6 +64,65 @@ impl Codegen {
                 format: InstrFormat::I(Immediate::Unlinked(end_label.clone())),
             });
         }
+
+        self.current_scope.push_label(end_label);
+        self.current_scope.retake(cond_reg);
+
+        Ok(())
+    }
+
+    pub(crate) fn cga_while(
+        &mut self,
+        cond: &mut AstNode<'_>,
+        body: &mut AstNode<'_>,
+    ) -> Result<()> {
+        let cond_reg = self.current_scope.any_register(Some(Type::Int))?;
+        let cond_label = format!(
+            "{}cond{}",
+            self.current_scope.label,
+            self.current_scope.num_children()
+        );
+        let body_label = format!(
+            "{}body{}",
+            self.current_scope.label,
+            self.current_scope.num_children()
+        );
+        let end_label = format!(
+            "{}end{}",
+            self.current_scope.label,
+            self.current_scope.num_children()
+        );
+
+        // condition
+        self.current_scope.push_label(cond_label.clone());
+        let cond = self.dfs_walk(cond, true)?.unwrap();
+        self.cga_store(cond_reg.clone(), cond)?;
+
+        // compare the boolean condition to 0
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Sub,
+            format: InstrFormat::RRR(Register::R0, cond_reg.get_register()?, Register::R0),
+        });
+
+        // if it's 0 (false) jump to the end
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Jz,
+            format: InstrFormat::I(Immediate::Unlinked(end_label.clone())),
+        });
+
+        // otherwise, jump to the body
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Jmp,
+            format: InstrFormat::I(Immediate::Unlinked(body_label.clone())),
+        });
+
+        // body
+        self.current_scope.push_label(body_label);
+        self.dfs_walk(body, false)?;
+        self.current_scope.push_instr(Instruction {
+            op: Opcode::Jmp,
+            format: InstrFormat::I(Immediate::Unlinked(cond_label.clone())),
+        });
 
         self.current_scope.push_label(end_label);
         self.current_scope.retake(cond_reg);

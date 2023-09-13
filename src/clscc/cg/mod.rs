@@ -212,7 +212,7 @@ impl Scope {
                 Register::R6,
             ])),
             stack_offset: RefCell::new(0),
-            label: "root".to_string(),
+            label: String::new(),
             sequence: RefCell::new(Vec::default()),
         })
     }
@@ -297,7 +297,7 @@ impl Scope {
         Ok(val)
     }
 
-    pub fn retake(&self, val: Value) {
+    pub fn retake(&self, val: Value) -> Option<()> {
         if let Some(val) = self.values.borrow_mut().remove(&val.inner.id) {
             match val.storage() {
                 ValueStorage::Register(reg) => {
@@ -307,8 +307,9 @@ impl Scope {
                 ValueStorage::Stack(_) => {}
                 ValueStorage::Immediate(_) => {}
             }
+            Some(())
         } else {
-            unreachable!("value not found in scope");
+            None
         }
     }
 
@@ -373,7 +374,12 @@ impl Codegen {
     }
 
     fn push_scope(&mut self, label: String) -> Rc<Scope> {
-        let scope = self.current_scope.push_scope(label);
+        let scope = self.current_scope.push_scope(format!(
+            "{}{}{}",
+            self.current_scope.label,
+            label,
+            self.current_scope.num_children()
+        ));
         self.current_scope = scope.clone();
         scope
     }
@@ -415,11 +421,7 @@ impl Codegen {
         match node.ast.as_mut() {
             Ast::Binary { op, lhs, rhs } => self.cg_binary(op, lhs, rhs),
             Ast::Block(stmts) => {
-                self.push_scope(format!(
-                    "{}block{}",
-                    self.current_scope.label,
-                    self.current_scope.num_children()
-                ));
+                self.push_scope("block".to_owned());
                 for stmt in stmts {
                     self.dfs_walk(stmt, rvalue)?;
                 }
@@ -545,7 +547,11 @@ impl Codegen {
                     }
                 }
                 assert!(self.current_scope.parent.upgrade().is_none());
-                self.push_scope(name_val.ident().unwrap().to_owned());
+                let scope = self
+                    .root_scope
+                    .push_scope(name_val.ident().unwrap().to_owned());
+                self.current_scope = scope;
+                // self.push_scope(name_val.ident().unwrap().to_owned());
                 self.current_scope.extern_label("printi");
                 if name == "start" {
                     self.cga_start_prelude()?;
@@ -625,7 +631,9 @@ impl Codegen {
                 )))
             }
             Ast::If { cond, then, els } => {
+                self.push_scope("if".to_string());
                 let cond = self.dfs_walk(cond, rvalue)?.unwrap();
+                self.pop_scope();
                 self.cg_if_else(cond, then, els)
             }
             Ast::Index { name, index } => {
@@ -644,10 +652,6 @@ impl Codegen {
                 let member = self.dfs_walk(member, rvalue)?;
                 todo!()
             }
-            Ast::Pointer(expr) => {
-                let expr = self.dfs_walk(expr, rvalue)?;
-                todo!()
-            }
             Ast::Postfix { op, lhs } => {
                 let op = self.dfs_walk(op, rvalue)?;
                 let lhs = self.dfs_walk(lhs, rvalue)?;
@@ -662,14 +666,10 @@ impl Codegen {
             }
             Ast::Return(expr) => {
                 let expr = if let Some(expr) = expr {
-                    Some(self.dfs_walk(expr, rvalue)?)
+                    Some(self.dfs_walk(expr, rvalue)?.unwrap())
                 } else {
                     None
                 };
-                todo!()
-            }
-            Ast::Sizeof(ty) => {
-                let ty = self.dfs_walk(ty, rvalue)?;
                 todo!()
             }
             Ast::StringLiteral(val) => {
@@ -684,11 +684,7 @@ impl Codegen {
                 let rhs = self.dfs_walk(rhs, rvalue)?;
                 todo!()
             }
-            Ast::While { cond, body } => {
-                let cond = self.dfs_walk(cond, rvalue)?;
-                let body = self.dfs_walk(body, rvalue)?;
-                todo!()
-            }
+            Ast::While { cond, body } => self.cg_while(cond, body),
         }
     }
 }

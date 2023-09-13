@@ -4,24 +4,23 @@ use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 use crate::clscc::cg::{Codegen, Value, ValueStorage};
 
 impl Codegen {
-    pub(crate) fn cga_add(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
-        self.cga_arith(lhs, rhs, Opcode::Add)
+    pub(crate) fn cga_add(&mut self, result: Value, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(result, lhs, rhs, Opcode::Add)
     }
 
-    pub(crate) fn cga_sub(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
-        self.cga_arith(lhs, rhs, Opcode::Sub)
+    pub(crate) fn cga_sub(&mut self, result: Value, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(result, lhs, rhs, Opcode::Sub)
     }
 
-    pub(crate) fn cga_mul(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
-        self.cga_arith(lhs, rhs, Opcode::Mul)
+    pub(crate) fn cga_mul(&mut self, result: Value, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(result, lhs, rhs, Opcode::Mul)
     }
 
-    pub(crate) fn cga_div(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
-        self.cga_arith(lhs, rhs, Opcode::Div)
+    pub(crate) fn cga_div(&mut self, result: Value, lhs: Value, rhs: Value) -> Result<Value> {
+        self.cga_arith(result, lhs, rhs, Opcode::Div)
     }
 
-    fn cga_arith(&mut self, lhs: Value, rhs: Value, op: Opcode) -> Result<Value> {
-        let result = self.current_scope.any_register(lhs.ty().cloned())?;
+    fn cga_arith(&mut self, result: Value, lhs: Value, rhs: Value, op: Opcode) -> Result<Value> {
         match (lhs.storage(), rhs.storage()) {
             (ValueStorage::Register(lhs), ValueStorage::Register(rhs)) => {
                 self.current_scope.push_instr(Instruction {

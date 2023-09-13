@@ -70,18 +70,18 @@ impl Type {
             Type::Void => 0,
             Type::Char => 1,
             Type::Short => 2,
-            Type::Int => 4,
-            Type::Long => 8,
+            Type::Int => 2,
+            Type::Long => 2,
             Type::Float => 4,
             Type::Double => 8,
-            Type::Signed => 4,
-            Type::Unsigned => 4,
+            Type::Signed => 2,
+            Type::Unsigned => 2,
             Type::Struct(_) => 0,
             Type::Union(_) => 0,
             Type::Enum(_) => 4,
             Type::Typedef(_) => 0,
-            Type::Pointer(_) => 8,
-            Type::Array(ty, len) => ty.sizeof() * len,
+            Type::Pointer(_) => 2,
+            Type::Array(_ty, _len) => 2, // pointer to first element
             Type::Function(_, _) => 0,
         }
     }
@@ -128,8 +128,6 @@ pub enum Ast<'a> {
     Ident(Token<'a>),
     Integer(i64),
     StringLiteral(String),
-    // Basic AST nodes
-    Pointer(AstNode<'a>),
     // Compound AST nodes
     Program(Vec<AstNode<'a>>),
     FunctionDef {
@@ -188,7 +186,6 @@ pub enum Ast<'a> {
     Cast {
         expr: AstNode<'a>,
     },
-    Sizeof(AstNode<'a>),
     Declaration {
         decl: Vec<AstNode<'a>>,
     },
@@ -274,7 +271,6 @@ impl<'a> AstNode<'a> {
         })(inp)?;
         log::trace!("Out Ast::parse_string_literal");
         if let TokenVariant::String(s) = &t.tok[0].variant {
-            // let len = AstNode::new_rvalue(Ast::Integer(s.len() as i64), Some(Type::Int));
             Ok((
                 inp,
                 AstNode::new(
@@ -328,37 +324,47 @@ impl<'a> AstNode<'a> {
                     lhs.typ,
                 ),
             ));
+        } else if let Ok((inp, _)) = punc_period(inp.clone()) {
+            // member expr (non-pointer)
+            let (inp, member) = Self::parse_ident(inp)?;
+            log::trace!("Out Ast::parse_postfix_expr (member)");
+            return Ok((
+                inp,
+                AstNode::new_rvalue(
+                    Ast::Member {
+                        name: lhs,
+                        member: member.to_owned(),
+                    },
+                    member.typ,
+                ),
+            ));
+        } else if let Ok((inp, _)) = punc_rarrow(inp.clone()) {
+            // member expr (pointer)
+            let (inp, member) = Self::parse_ident(inp)?;
+            log::trace!("Out Ast::parse_postfix_expr (pointer member)");
+            return Ok((
+                inp,
+                AstNode::new_rvalue(
+                    Ast::Member {
+                        name: lhs,
+                        member: member.to_owned(),
+                    },
+                    member.typ,
+                ),
+            ));
         }
         let (inp, res) = many0(alt((
-            tuple((punc_period, Self::parse_ident)),
-            tuple((punc_rarrow, Self::parse_ident)),
             tuple((punc_plusplus, Self::parse_ident)),
             tuple((punc_minusminus, Self::parse_ident)),
         )))(inp)?;
         let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
-            let typ = match *op.ast {
-                Ast::Token(Token {
-                    variant: TokenVariant::Punctuator(punc),
-                    ..
-                }) => match punc {
-                    Punctuator::Period => match lhs.typ.as_ref() {
-                        Some(Type::Struct(_) | Type::Union(_)) => rhs.typ,
-                        None => None,
-                        _ => unreachable!(),
-                    },
-                    Punctuator::RArrow => match lhs.typ.as_ref() {
-                        Some(Type::Pointer(ty)) => match **ty {
-                            Type::Struct(_) | Type::Union(_) => rhs.typ,
-                            _ => unreachable!(),
-                        },
-                        None => None,
-                        _ => unreachable!(),
-                    },
-                    _ => None,
+            AstNode::new(
+                Ast::Postfix {
+                    op,
+                    lhs: lhs.to_owned(),
                 },
-                _ => None,
-            };
-            AstNode::new(Ast::Postfix { op, lhs }, typ)
+                lhs.typ,
+            )
         });
         log::trace!("Out Ast::parse_postfix_expr");
         Ok((inp, res))
