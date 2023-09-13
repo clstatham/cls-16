@@ -1,7 +1,6 @@
 use std::{
     backtrace::Backtrace,
     cell::RefCell,
-    collections::BTreeMap,
     rc::{Rc, Weak},
     sync::atomic::AtomicUsize,
     vec,
@@ -13,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::clscc::{
-    common::{Punctuator, Token, TokenVariant},
+    common::{Punctuator, TokenVariant},
     parser::{Ast, AstNode, Type},
 };
 
@@ -409,35 +408,40 @@ impl Codegen {
         }
     }
 
-    pub fn gen(&mut self, root: &mut AstNode<'_>) -> Result<String> {
-        self.dfs_walk(root, true)?;
+    pub fn gen(&mut self, root: &AstNode<'_>) -> Result<String> {
+        self.dfs_walk(root, None, true)?;
         let mut lines = vec![];
         assert!(self.current_scope.parent.upgrade().is_none());
         Self::recursive_gen(&self.root_scope, &mut lines, 0);
         Ok(lines.join("\n"))
     }
 
-    pub fn dfs_walk(&mut self, node: &mut AstNode<'_>, rvalue: bool) -> Result<Option<Value>> {
-        match node.ast.as_mut() {
-            Ast::Binary { op, lhs, rhs } => self.cg_binary(op, lhs, rhs),
+    pub fn dfs_walk(
+        &mut self,
+        node: &AstNode<'_>,
+        parent: Option<&AstNode<'_>>,
+        rvalue: bool,
+    ) -> Result<Option<Value>> {
+        match node.ast.as_ref() {
+            Ast::Binary { op, lhs, rhs } => self.cg_binary(op, lhs, rhs, Some(node)),
             Ast::Block(stmts) => {
                 self.push_scope("block".to_owned());
                 for stmt in stmts {
-                    self.dfs_walk(stmt, rvalue)?;
+                    self.dfs_walk(stmt, Some(node), rvalue)?;
                 }
                 self.pop_scope();
                 Ok(None)
             }
             Ast::Call { name, args } => {
-                let name = self
-                    .dfs_walk(name, rvalue)?
-                    .ok_or(Error::from(CodegenError::new(CodegenErrorKind::Expected {
+                let name = self.dfs_walk(name, Some(node), rvalue)?.ok_or(Error::from(
+                    CodegenError::new(CodegenErrorKind::Expected {
                         expected: vec!["function name".to_string()],
                         got: String::new(),
-                    })))?;
+                    }),
+                ))?;
                 let mut arg_vals = vec![];
                 for arg in args {
-                    arg_vals.push(self.dfs_walk(arg, rvalue)?.ok_or(Error::from(
+                    arg_vals.push(self.dfs_walk(arg, Some(node), rvalue)?.ok_or(Error::from(
                         CodegenError::new(CodegenErrorKind::Expected {
                             expected: vec!["argument".to_string()],
                             got: String::new(),
@@ -447,7 +451,7 @@ impl Codegen {
                 self.cg_call(name, arg_vals)
             }
             Ast::Cast { expr } => {
-                let expr = self.dfs_walk(expr, rvalue)?.unwrap();
+                let expr = self.dfs_walk(expr, Some(node), rvalue)?.unwrap();
                 Ok(Some(expr))
             }
             Ast::Declaration { decl } => {
@@ -498,8 +502,8 @@ impl Codegen {
                 Ok(None)
             }
             Ast::DoWhile { body, cond } => {
-                let body = self.dfs_walk(body, rvalue)?;
-                let cond = self.dfs_walk(cond, rvalue)?;
+                let body = self.dfs_walk(body, Some(node), rvalue)?;
+                let cond = self.dfs_walk(cond, Some(node), rvalue)?;
                 todo!()
             }
             Ast::For {
@@ -508,10 +512,10 @@ impl Codegen {
                 step,
                 body,
             } => {
-                let init = self.dfs_walk(init, rvalue)?;
-                let cond = self.dfs_walk(cond, rvalue)?;
-                let step = self.dfs_walk(step, rvalue)?;
-                let body = self.dfs_walk(body, rvalue)?;
+                let init = self.dfs_walk(init, Some(node), rvalue)?;
+                let cond = self.dfs_walk(cond, Some(node), rvalue)?;
+                let step = self.dfs_walk(step, Some(node), rvalue)?;
+                let body = self.dfs_walk(body, Some(node), rvalue)?;
                 todo!()
             }
             Ast::FunctionDef { name, params, body } => {
@@ -535,7 +539,7 @@ impl Codegen {
                 let mut param_names = vec![];
                 let mut param_types = vec![];
                 for param in params {
-                    let param = self.dfs_walk(param, rvalue)?.unwrap();
+                    let param = self.dfs_walk(param, Some(node), rvalue)?.unwrap();
                     param_types.push(param.ty().cloned().unwrap());
                     if let Some(ident) = param.ident() {
                         param_names.push(ident.to_owned());
@@ -551,7 +555,7 @@ impl Codegen {
                     .root_scope
                     .push_scope(name_val.ident().unwrap().to_owned());
                 self.current_scope = scope;
-                // self.push_scope(name_val.ident().unwrap().to_owned());
+
                 self.current_scope.extern_label("printi");
                 if name == "start" {
                     self.cga_start_prelude()?;
@@ -566,9 +570,9 @@ impl Codegen {
                     );
                 }
                 self.current_scope.push_label(format!("{}body", name));
-                if let Ast::Block(stmts) = &mut *body.ast {
-                    for stmt in stmts.iter_mut() {
-                        self.dfs_walk(stmt, rvalue)?;
+                if let Ast::Block(stmts) = &*body.ast {
+                    for stmt in stmts.iter() {
+                        self.dfs_walk(stmt, Some(node), rvalue)?;
                     }
                 } else {
                     unreachable!()
@@ -632,13 +636,13 @@ impl Codegen {
             }
             Ast::If { cond, then, els } => {
                 self.push_scope("if".to_string());
-                let cond = self.dfs_walk(cond, rvalue)?.unwrap();
+                let cond = self.dfs_walk(cond, Some(node), rvalue)?.unwrap();
                 self.pop_scope();
-                self.cg_if_else(cond, then, els)
+                self.cg_if_else(cond, then, els, Some(node))
             }
             Ast::Index { name, index } => {
-                let name = self.dfs_walk(name, rvalue)?.unwrap();
-                let index = self.dfs_walk(index, rvalue)?.unwrap();
+                let name = self.dfs_walk(name, Some(node), rvalue)?.unwrap();
+                let index = self.dfs_walk(index, Some(node), rvalue)?.unwrap();
                 self.cg_index(name, index, rvalue)
             }
             Ast::Integer(val) => Ok(Some(self.current_scope.insert(
@@ -648,25 +652,79 @@ impl Codegen {
                 true,
             ))),
             Ast::Member { name, member } => {
-                let name = self.dfs_walk(name, rvalue)?;
-                let member = self.dfs_walk(member, rvalue)?;
+                let name = self.dfs_walk(name, Some(node), rvalue)?;
+                let member = self.dfs_walk(member, Some(node), rvalue)?;
                 todo!()
             }
             Ast::Postfix { op, lhs } => {
-                let op = self.dfs_walk(op, rvalue)?;
-                let lhs = self.dfs_walk(lhs, rvalue)?;
-                dbg!(&op, &lhs);
-                todo!()
+                if let Ast::Token(op) = &*op.ast {
+                    if let TokenVariant::Punctuator(op) = op.variant {
+                        if op == Punctuator::PlusPlus {
+                            let lhs = self.dfs_walk(lhs, Some(node), rvalue)?.unwrap();
+                            let result = self.current_scope.any_register(lhs.ty().cloned())?;
+                            let one = self.current_scope.insert(
+                                None,
+                                Some(Type::Int),
+                                ValueStorage::Immediate(Immediate::Linked(1)),
+                                true,
+                            );
+                            let result = self.cga_add(result, lhs.clone(), one.clone())?;
+                            self.current_scope.retake(one);
+                            self.cga_store(lhs.clone(), result.clone())?;
+                            self.current_scope.retake(result);
+                            Ok(Some(lhs))
+                        } else if op == Punctuator::MinusMinus {
+                            let lhs = self.dfs_walk(lhs, Some(node), rvalue)?.unwrap();
+                            let result = self.current_scope.any_register(lhs.ty().cloned())?;
+                            let one = self.current_scope.insert(
+                                None,
+                                Some(Type::Int),
+                                ValueStorage::Immediate(Immediate::Linked(1)),
+                                true,
+                            );
+                            let result = self.cga_sub(result, lhs.clone(), one.clone())?;
+                            self.current_scope.retake(one);
+                            self.cga_store(lhs.clone(), result.clone())?;
+                            self.current_scope.retake(result);
+                            Ok(Some(lhs))
+                        } else {
+                            Err(Error::new(CodegenError::new(
+                                CodegenErrorKind::ExpectedToken {
+                                    expected: vec![
+                                        TokenVariant::Punctuator(Punctuator::PlusPlus),
+                                        TokenVariant::Punctuator(Punctuator::MinusMinus),
+                                    ],
+                                    got: TokenVariant::Punctuator(op),
+                                },
+                            )))
+                        }
+                    } else {
+                        Err(Error::new(CodegenError::new(
+                            CodegenErrorKind::ExpectedToken {
+                                expected: vec![
+                                    TokenVariant::Punctuator(Punctuator::PlusPlus),
+                                    TokenVariant::Punctuator(Punctuator::MinusMinus),
+                                ],
+                                got: TokenVariant::Punctuator(Punctuator::PlusPlus),
+                            },
+                        )))
+                    }
+                } else {
+                    Err(Error::new(CodegenError::new(CodegenErrorKind::Expected {
+                        expected: vec!["token".to_owned()],
+                        got: String::new(),
+                    })))
+                }
             }
             Ast::Program(stmts) => {
                 for stmt in stmts {
-                    self.dfs_walk(stmt, rvalue)?;
+                    self.dfs_walk(stmt, Some(node), rvalue)?;
                 }
                 Ok(None)
             }
             Ast::Return(expr) => {
                 let expr = if let Some(expr) = expr {
-                    Some(self.dfs_walk(expr, rvalue)?.unwrap())
+                    Some(self.dfs_walk(expr, Some(node), rvalue)?.unwrap())
                 } else {
                     None
                 };
@@ -680,11 +738,11 @@ impl Codegen {
                 Ok(None)
             }
             Ast::Unary { op, rhs } => {
-                let op = self.dfs_walk(op, rvalue)?;
-                let rhs = self.dfs_walk(rhs, rvalue)?;
+                let op = self.dfs_walk(op, Some(node), rvalue)?;
+                let rhs = self.dfs_walk(rhs, Some(node), rvalue)?;
                 todo!()
             }
-            Ast::While { cond, body } => self.cg_while(cond, body),
+            Ast::While { cond, body } => self.cg_while(cond, body, Some(node)),
         }
     }
 }

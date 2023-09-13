@@ -26,7 +26,11 @@ struct AssembleArgs {
 struct CompileArgs {
     #[clap(help = "Path to the C source file to compile")]
     input: PathBuf,
-    #[clap(short, long, help = "Emit assembly code instead of a binary")]
+    #[clap(
+        short = 'a',
+        long,
+        help = "Emit an assembly source file along with the binary"
+    )]
     emit_asm: bool,
     #[clap(short = 'O', long, default_value = "0", help = "Optimization level")]
     opt_level: u8,
@@ -36,8 +40,8 @@ struct CompileArgs {
 struct RunArgs {
     #[clap(help = "Path to the CLS-16 binary to run")]
     input: PathBuf,
-    #[clap(short, long, help = "Clockrate to run the emulator at")]
-    clockrate: Option<u32>,
+    #[clap(short = 'c', long, help = "Clockrate to run the emulator at")]
+    clock_rate: Option<u32>,
 }
 
 #[derive(Subcommand)]
@@ -72,9 +76,9 @@ fn main() -> Result<()> {
         Command::Compile(args) => {
             let c_program = std::fs::read_to_string(&args.input)?;
             let tokens = lex(&c_program)?;
-            let mut root = AstNode::parse(Tokens::new(&tokens))?;
+            let root = AstNode::parse(Tokens::new(&tokens))?;
             let mut cg = Codegen::new();
-            let program = cg.gen(&mut root)?;
+            let program = cg.gen(&root)?;
             if args.emit_asm {
                 let output = args.input.with_extension("s");
                 std::fs::write(output, &program)?;
@@ -91,7 +95,7 @@ fn main() -> Result<()> {
         }
         Command::Run(args) => {
             let program = std::fs::read(&args.input)?;
-            let mut emu = Emulator::new(&program, args.clockrate.unwrap_or(2_000_000).into())?;
+            let mut emu = Emulator::new(&program, args.clock_rate.unwrap_or(2_000_000).into())?;
             emu.cont()?;
         }
     }

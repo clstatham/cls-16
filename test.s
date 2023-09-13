@@ -29,12 +29,6 @@
   jmp %startbody1
 %startbody1
   %startblock2
-    %startblock2binary0
-      ldl r2 fp $0x2
-      ldh r2 fp $0x3
-      div r2 r2 $0x2
-      stl fp r2 $0x2
-      sth fp r2 $0x3
     ldl r2 fp $0x2
     ldh r2 fp $0x3
     printi r2

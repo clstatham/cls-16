@@ -353,21 +353,20 @@ impl<'a> AstNode<'a> {
                 ),
             ));
         }
-        let (inp, res) = many0(alt((
-            tuple((punc_plusplus, Self::parse_ident)),
-            tuple((punc_minusminus, Self::parse_ident)),
-        )))(inp)?;
-        let res = res.into_iter().fold(lhs, |lhs, (op, rhs)| {
-            AstNode::new(
+        if let Ok((inp, op)) = alt((punc_plusplus, punc_minusminus))(inp.clone()) {
+            let res = AstNode::new_rvalue(
                 Ast::Postfix {
-                    op,
-                    lhs: lhs.to_owned(),
+                    op: op.clone(),
+                    lhs: lhs.clone(),
                 },
                 lhs.typ,
-            )
-        });
-        log::trace!("Out Ast::parse_postfix_expr");
-        Ok((inp, res))
+            );
+            log::trace!("Out Ast::parse_postfix_expr with {:?}", op);
+            Ok((inp, res))
+        } else {
+            log::trace!("Out Ast::parse_postfix_expr");
+            Ok((inp, lhs))
+        }
     }
 
     fn parse_cast_expr(inp: Tokens<'a>) -> IResult<Tokens<'a>, Self> {

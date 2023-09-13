@@ -2,9 +2,8 @@ use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
 use crate::clscc::{
-    cg::{Codegen, Value, ValueStorage},
+    cg::{Codegen, Value},
     common::Punctuator,
-    parser::Type,
 };
 
 impl Codegen {
@@ -77,7 +76,7 @@ impl Codegen {
         //   if carry flag is set, lhs < rhs
         //   if zero flag is set, lhs == rhs
         //   if neither flag is set, lhs > rhs
-        let (jump_zero, jump_carry, jump_neither) = match op {
+        let (jump_eq, jump_lt, jump_gt) = match op {
             Punctuator::EqEq => (true_label.clone(), false_label.clone(), false_label.clone()),
             Punctuator::BangEq => (false_label.clone(), true_label.clone(), true_label.clone()),
             Punctuator::Lt => (false_label.clone(), true_label.clone(), false_label.clone()),
@@ -89,15 +88,15 @@ impl Codegen {
 
         self.current_scope.push_instr(Instruction {
             op: Opcode::Jz,
-            format: InstrFormat::I(Immediate::Unlinked(jump_zero.clone())),
+            format: InstrFormat::I(Immediate::Unlinked(jump_eq)),
         });
         self.current_scope.push_instr(Instruction {
             op: Opcode::Jc,
-            format: InstrFormat::I(Immediate::Unlinked(jump_carry.clone())),
+            format: InstrFormat::I(Immediate::Unlinked(jump_lt)),
         });
         self.current_scope.push_instr(Instruction {
             op: Opcode::Jmp,
-            format: InstrFormat::I(Immediate::Unlinked(jump_neither.clone())),
+            format: InstrFormat::I(Immediate::Unlinked(jump_gt)),
         });
 
         self.current_scope.push_label(true_label);

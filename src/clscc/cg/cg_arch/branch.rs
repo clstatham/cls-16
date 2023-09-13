@@ -1,10 +1,8 @@
-use std::rc::Rc;
-
 use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
 use crate::clscc::{
-    cg::{Codegen, Scope, Value},
+    cg::{Codegen, Value},
     parser::{AstNode, Type},
 };
 
@@ -12,8 +10,9 @@ impl Codegen {
     pub(crate) fn cga_if_else(
         &mut self,
         cond: Value,
-        then: &mut AstNode<'_>,
-        els: &mut Option<AstNode<'_>>,
+        then: &AstNode<'_>,
+        els: &Option<AstNode<'_>>,
+        parent: Option<&AstNode<'_>>,
     ) -> Result<()> {
         let cond_reg = self.current_scope.any_register(Some(Type::Int))?;
         self.cga_store(cond_reg.clone(), cond)?;
@@ -41,7 +40,7 @@ impl Codegen {
 
         // then block
         self.push_scope(then_label);
-        self.dfs_walk(then, then.rvalue)?;
+        self.dfs_walk(then, parent.to_owned(), then.rvalue)?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Jmp,
             format: InstrFormat::I(Immediate::Unlinked(end_label.clone())),
@@ -51,7 +50,7 @@ impl Codegen {
         // else block
         if let Some(els) = els {
             self.push_scope(els_label);
-            self.dfs_walk(els, els.rvalue)?;
+            self.dfs_walk(els, parent, els.rvalue)?;
             self.current_scope.push_instr(Instruction {
                 op: Opcode::Jmp,
                 format: InstrFormat::I(Immediate::Unlinked(end_label.clone())),
@@ -73,8 +72,9 @@ impl Codegen {
 
     pub(crate) fn cga_while(
         &mut self,
-        cond: &mut AstNode<'_>,
-        body: &mut AstNode<'_>,
+        cond: &AstNode<'_>,
+        body: &AstNode<'_>,
+        parent: Option<&AstNode<'_>>,
     ) -> Result<()> {
         let cond_reg = self.current_scope.any_register(Some(Type::Int))?;
         let cond_label = format!(
@@ -95,7 +95,7 @@ impl Codegen {
 
         // condition
         self.current_scope.push_label(cond_label.clone());
-        let cond = self.dfs_walk(cond, true)?.unwrap();
+        let cond = self.dfs_walk(cond, parent, true)?.unwrap();
         self.cga_store(cond_reg.clone(), cond)?;
 
         // compare the boolean condition to 0
@@ -118,7 +118,7 @@ impl Codegen {
 
         // body
         self.current_scope.push_label(body_label);
-        self.dfs_walk(body, false)?;
+        self.dfs_walk(body, parent, false)?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Jmp,
             format: InstrFormat::I(Immediate::Unlinked(cond_label.clone())),
