@@ -1,10 +1,6 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 
-use crate::clscc::{
-    cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage},
-    common::{Punctuator, TokenVariant},
-    parser::{Ast, AstNode},
-};
+use crate::clscc::cg::{Codegen, Value};
 
 impl Codegen {
     pub(crate) fn cg_index(

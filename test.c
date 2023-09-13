@@ -1,8 +1,7 @@
 void start() {
-  short i[10];
-  i[0] = 1234;
-  i[1] = 4321;
-  printi(i[0]);
-  printi(i[1]);
-  printi(i[0]);
+  if (0) {
+    printi(2);
+  } else {
+    printi(3);
+  }
 }

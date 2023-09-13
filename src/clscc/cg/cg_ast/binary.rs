@@ -9,14 +9,10 @@ use crate::clscc::{
 impl Codegen {
     pub(crate) fn cg_binary(
         &mut self,
-        op: &mut AstNode<'_>,
+        op: &AstNode<'_>,
         lhs: &mut AstNode<'_>,
         rhs: &mut AstNode<'_>,
     ) -> Result<Option<Value>> {
-        // assert!(!lhs.rvalue, "parser incorrectly marked lhs as rvalue");
-        // lhs.rvalue = false;
-        // rhs.rvalue = true;
-        // assert!(rhs.rvalue, "parser incorrectly marked rhs as lvalue");
         let lhs = self.dfs_walk(lhs, false)?.unwrap();
         let rhs = self.dfs_walk(rhs, true)?.unwrap();
         assert!(rhs.rvalue());

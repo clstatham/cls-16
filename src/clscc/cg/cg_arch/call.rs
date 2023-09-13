@@ -14,16 +14,14 @@ impl Codegen {
         } else {
             todo!("call linked function")
         };
-        let block_name = self
-            .current_scope
-            .with_last_block(|b| Ok(b.label.clone()))?;
+        let block_name = self.current_scope.label.clone();
         let ret_addr_label = format!(
             "{}{}retaddr{}",
             block_name,
             name,
-            self.current_scope.num_blocks()
+            self.current_scope.num_children()
         );
-        self.current_scope.insert_label(&ret_addr_label);
+        self.current_scope.extern_label(&ret_addr_label);
         let ret_addr_reg = self.current_scope.any_register(Some(Type::Int))?;
         self.current_scope.push_instr(Instruction {
             op: Opcode::Mov,
@@ -40,7 +38,7 @@ impl Codegen {
             op: Opcode::Jmp,
             format: InstrFormat::RI(Register::PC, Immediate::Unlinked(name)),
         });
-        self.current_scope.push_block(ret_addr_label);
+        self.current_scope.push_label(ret_addr_label);
 
         let ret_val = self.current_scope.any_register(None)?; // todo: return types
         self.current_scope.push_instr(Instruction {

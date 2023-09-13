@@ -1,10 +1,6 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 
-use crate::clscc::{
-    cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage},
-    common::{Punctuator, TokenVariant},
-    parser::{Ast, AstNode},
-};
+use crate::clscc::cg::{Codegen, Value, ValueStorage};
 
 impl Codegen {
     pub fn cg_call(&mut self, name: Value, args: Vec<Value>) -> Result<Option<Value>> {

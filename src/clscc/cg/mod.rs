@@ -1,6 +1,7 @@
 use std::{
     backtrace::Backtrace,
     cell::RefCell,
+    collections::BTreeMap,
     rc::{Rc, Weak},
     sync::atomic::AtomicUsize,
     vec,
@@ -175,31 +176,32 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BlockElem {
+    Label(String),
     Instruction(Instruction),
     Comment(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct Block {
-    pub label: String,
-    pub sequence: Vec<BlockElem>,
+    Subscope(Rc<Scope>),
 }
 
 pub struct Scope {
+    pub sref: Weak<Scope>,
     pub parent: Weak<Scope>,
+    pub children: RefCell<Vec<Rc<Scope>>>,
     pub next_id: AtomicUsize,
     pub values: RefCell<FxHashMap<ValueId, Value>>,
     pub available_registers: RefCell<FxHashSet<Register>>,
     pub stack_offset: RefCell<usize>,
-    pub blocks: RefCell<Vec<Block>>,
+    pub label: String,
+    pub sequence: RefCell<Vec<BlockElem>>,
 }
 
 impl Scope {
     pub fn new_root() -> Rc<Self> {
-        Rc::new(Self {
+        Rc::new_cyclic(|sref| Self {
+            sref: sref.clone(),
             parent: Weak::new(),
+            children: RefCell::new(Vec::default()),
             next_id: AtomicUsize::new(0),
             values: RefCell::new(FxHashMap::default()),
             available_registers: RefCell::new(FxHashSet::from_iter([
@@ -210,23 +212,9 @@ impl Scope {
                 Register::R6,
             ])),
             stack_offset: RefCell::new(0),
-            blocks: RefCell::new(Vec::default()),
+            label: "root".to_string(),
+            sequence: RefCell::new(Vec::default()),
         })
-    }
-
-    fn new_child(parent: &Rc<Self>) -> Rc<Self> {
-        Rc::new(Self {
-            parent: Rc::downgrade(parent),
-            next_id: AtomicUsize::new(parent.next_id.load(std::sync::atomic::Ordering::SeqCst)),
-            values: parent.values.clone(),
-            available_registers: parent.available_registers.clone(),
-            stack_offset: parent.stack_offset.clone(),
-            blocks: RefCell::new(Vec::default()),
-        })
-    }
-
-    pub fn num_blocks(&self) -> usize {
-        self.blocks.borrow().len()
     }
 
     pub fn get_by_ident(&self, ident: &str) -> Option<Value> {
@@ -263,7 +251,7 @@ impl Scope {
         value
     }
 
-    pub fn insert_label(&self, ident: &str) -> Value {
+    pub fn extern_label(&self, ident: &str) -> Value {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -324,32 +312,8 @@ impl Scope {
         }
     }
 
-    pub fn push_block(&self, label: String) {
-        self.blocks.borrow_mut().push(Block {
-            label,
-            sequence: vec![],
-        });
-    }
-
-    pub fn with_last_block<F, R>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut Block) -> Result<R>,
-    {
-        let mut blocks = self.blocks.borrow_mut();
-        if let Some(block) = blocks.last_mut() {
-            f(block)
-        } else {
-            unreachable!("no blocks in scope")
-        }
-    }
-
     pub fn push_block_elem(&self, elem: BlockElem) {
-        let mut blocks = self.blocks.borrow_mut();
-        if let Some(block) = blocks.last_mut() {
-            block.sequence.push(elem);
-        } else {
-            unreachable!("no blocks in scope")
-        }
+        self.sequence.borrow_mut().push(elem)
     }
 
     pub fn push_instr(&self, instr: Instruction) {
@@ -360,8 +324,33 @@ impl Scope {
         self.push_block_elem(BlockElem::Comment(comment));
     }
 
+    pub fn push_label(&self, label: String) {
+        self.push_block_elem(BlockElem::Label(label));
+    }
+
+    pub fn push_scope(&self, label: String) -> Rc<Scope> {
+        let child = Rc::new_cyclic(|sref| Self {
+            sref: sref.clone(),
+            parent: self.sref.clone(),
+            children: RefCell::new(Vec::default()),
+            next_id: AtomicUsize::new(self.next_id.load(std::sync::atomic::Ordering::SeqCst)),
+            values: self.values.clone(),
+            available_registers: self.available_registers.clone(),
+            stack_offset: self.stack_offset.clone(),
+            label,
+            sequence: RefCell::new(Vec::default()),
+        });
+        self.children.borrow_mut().push(child.clone());
+        self.push_block_elem(BlockElem::Subscope(child.clone()));
+        child
+    }
+
     pub fn stack_offset(&self) -> usize {
         *self.stack_offset.borrow()
+    }
+
+    pub fn num_children(&self) -> usize {
+        self.children.borrow().len()
     }
 }
 
@@ -370,23 +359,21 @@ impl Scope {
 pub struct ScopeId(pub usize);
 
 pub struct Codegen {
-    pub scopes: FxHashMap<ScopeId, Rc<Scope>>,
+    pub root_scope: Rc<Scope>,
     pub current_scope: Rc<Scope>,
 }
 
 impl Codegen {
     pub fn new() -> Self {
-        let current_scope = Scope::new_root();
+        let root_scope = Scope::new_root();
         Self {
-            current_scope: current_scope.clone(),
-            scopes: FxHashMap::from_iter([(ScopeId(0), current_scope)]),
+            current_scope: root_scope.clone(),
+            root_scope,
         }
     }
 
-    fn push_scope(&mut self) -> Rc<Scope> {
-        let scope = Scope::new_child(&self.current_scope);
-        let id = ScopeId(self.scopes.len());
-        self.scopes.insert(id, scope.clone());
+    fn push_scope(&mut self, label: String) -> Rc<Scope> {
+        let scope = self.current_scope.push_scope(label);
         self.current_scope = scope.clone();
         scope
     }
@@ -396,21 +383,31 @@ impl Codegen {
         self.current_scope = parent;
     }
 
-    pub fn gen(&mut self, root: &mut AstNode<'_>) -> Result<String> {
-        self.dfs_walk(root, true)?;
-        let mut lines = vec![];
-        for scope in self.scopes.values() {
-            for block in scope.blocks.borrow().iter() {
-                lines.push(format!("%{}", block.label));
-                for elem in block.sequence.iter() {
-                    match elem {
-                        BlockElem::Instruction(instr) => lines.push(format!("    {}", instr)),
-                        BlockElem::Comment(comment) => lines.push(format!("    ; {}", comment)),
-                    }
+    fn recursive_gen(root: &Rc<Scope>, lines: &mut Vec<String>, depth: usize) {
+        for elem in root.sequence.borrow().iter() {
+            match elem {
+                BlockElem::Instruction(instr) => {
+                    lines.push(format!("{}{}", " ".repeat(depth * 2), instr))
+                }
+                BlockElem::Comment(comment) => {
+                    lines.push(format!("{}; {}", " ".repeat(depth * 2), comment))
+                }
+                BlockElem::Label(label) => {
+                    lines.push(format!("{}%{}", " ".repeat((depth - 1) * 2), label))
+                }
+                BlockElem::Subscope(scope) => {
+                    lines.push(format!("{}%{}", " ".repeat(depth * 2), scope.label));
+                    Self::recursive_gen(scope, lines, depth + 1)
                 }
             }
         }
+    }
 
+    pub fn gen(&mut self, root: &mut AstNode<'_>) -> Result<String> {
+        self.dfs_walk(root, true)?;
+        let mut lines = vec![];
+        assert!(self.current_scope.parent.upgrade().is_none());
+        Self::recursive_gen(&self.root_scope, &mut lines, 0);
         Ok(lines.join("\n"))
     }
 
@@ -418,9 +415,15 @@ impl Codegen {
         match node.ast.as_mut() {
             Ast::Binary { op, lhs, rhs } => self.cg_binary(op, lhs, rhs),
             Ast::Block(stmts) => {
+                self.push_scope(format!(
+                    "{}block{}",
+                    self.current_scope.label,
+                    self.current_scope.num_children()
+                ));
                 for stmt in stmts {
                     self.dfs_walk(stmt, rvalue)?;
                 }
+                self.pop_scope();
                 Ok(None)
             }
             Ast::Call { name, args } => {
@@ -442,8 +445,8 @@ impl Codegen {
                 self.cg_call(name, arg_vals)
             }
             Ast::Cast { expr } => {
-                let expr = self.dfs_walk(expr, rvalue)?;
-                todo!()
+                let expr = self.dfs_walk(expr, rvalue)?.unwrap();
+                Ok(Some(expr))
             }
             Ast::Declaration { decl } => {
                 let mut decl_vals = vec![];
@@ -458,12 +461,11 @@ impl Codegen {
                                         *elem.to_owned(),
                                         decl.rvalue,
                                     )?;
-                                    // decl_vals.push(val);
                                 }
                                 // push the pointer
                                 let ptr = self.current_scope.push_stack(
                                     Some(id.to_owned()),
-                                    Type::Pointer(elem.clone()),
+                                    Type::Array(elem.clone(), *numel),
                                     // can't change the base address of an array
                                     true,
                                 )?;
@@ -513,7 +515,7 @@ impl Codegen {
             Ast::FunctionDef { name, params, body } => {
                 let (name, name_val) = if let Ast::Ident(name) = &*name.ast {
                     if let TokenVariant::Ident(name) = &name.variant {
-                        (name.to_owned(), self.current_scope.insert_label(name))
+                        (name.to_owned(), self.current_scope.extern_label(name))
                     } else {
                         return Err(Error::new(CodegenError::new(
                             CodegenErrorKind::ExpectedToken {
@@ -542,10 +544,9 @@ impl Codegen {
                         })));
                     }
                 }
-                self.push_scope();
-                self.current_scope.insert_label("printi");
-                self.current_scope
-                    .push_block(name_val.ident().unwrap().to_owned());
+                assert!(self.current_scope.parent.upgrade().is_none());
+                self.push_scope(name_val.ident().unwrap().to_owned());
+                self.current_scope.extern_label("printi");
                 if name == "start" {
                     self.cga_start_prelude()?;
                 }
@@ -558,24 +559,30 @@ impl Codegen {
                         true,
                     );
                 }
-                self.current_scope.push_block(format!("{}body", name));
-                let body = self.dfs_walk(body, rvalue)?;
-                {
-                    let mut blocks = self.current_scope.blocks.borrow_mut();
-                    blocks.first_mut().unwrap().sequence.extend_from_slice(&[
-                        BlockElem::Instruction(Instruction {
-                            op: Opcode::Sub,
-                            format: InstrFormat::RRI(
-                                Register::FP,
-                                Register::FP,
-                                Immediate::Linked(self.current_scope.stack_offset() as u16),
-                            ),
-                        }),
-                        BlockElem::Instruction(Instruction {
-                            op: Opcode::Mov,
-                            format: InstrFormat::RR(Register::SP, Register::FP),
-                        }),
-                    ]);
+                self.current_scope.push_label(format!("{}body", name));
+                if let Ast::Block(stmts) = &mut *body.ast {
+                    for stmt in stmts.iter_mut() {
+                        self.dfs_walk(stmt, rvalue)?;
+                    }
+                } else {
+                    unreachable!()
+                }
+                let prologue = vec![
+                    BlockElem::Instruction(Instruction {
+                        op: Opcode::Sub,
+                        format: InstrFormat::RRI(
+                            Register::FP,
+                            Register::FP,
+                            Immediate::Linked(self.current_scope.stack_offset() as u16),
+                        ),
+                    }),
+                    BlockElem::Instruction(Instruction {
+                        op: Opcode::Mov,
+                        format: InstrFormat::RR(Register::SP, Register::FP),
+                    }),
+                ];
+                for elem in prologue.into_iter().rev() {
+                    self.current_scope.sequence.borrow_mut().insert(0, elem);
                 }
                 self.current_scope.push_instr(Instruction {
                     op: Opcode::Add,
@@ -589,8 +596,12 @@ impl Codegen {
                     op: Opcode::Mov,
                     format: InstrFormat::RR(Register::SP, Register::FP),
                 });
+
+                self.current_scope.push_label(format!("{}return", name));
                 if name == "start" {
                     self.cga_halt()?;
+                } else {
+                    todo!("return from function")
                 }
 
                 self.pop_scope();
@@ -614,14 +625,8 @@ impl Codegen {
                 )))
             }
             Ast::If { cond, then, els } => {
-                let cond = self.dfs_walk(cond, rvalue)?;
-                let then = self.dfs_walk(then, rvalue)?;
-                let els = if let Some(els) = els {
-                    Some(self.dfs_walk(els, rvalue)?)
-                } else {
-                    None
-                };
-                todo!()
+                let cond = self.dfs_walk(cond, rvalue)?.unwrap();
+                self.cg_if_else(cond, then, els)
             }
             Ast::Index { name, index } => {
                 let name = self.dfs_walk(name, rvalue)?.unwrap();

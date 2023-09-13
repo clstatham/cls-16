@@ -1,9 +1,10 @@
 use anyhow::Result;
 use cls16::{Immediate, InstrFormat, Instruction, Opcode, Register};
 
-use crate::clscc::cg::{Codegen, CodegenError, CodegenErrorKind, Value, ValueStorage};
+use crate::clscc::cg::{Codegen, Value, ValueStorage};
 
 pub mod arith;
+pub mod branch;
 pub mod call;
 pub mod mem;
 
